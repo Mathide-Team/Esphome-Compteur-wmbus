@@ -30,7 +30,7 @@ Logiciel : ESPHome (configuration validée avec **2026.9.1**), composant externe
 | [Heemol Carte de développement LoRa 32 V4 ESP32 avec écran OLED 0,96" (ESP32-S3R2, SX1262, WiFi, Bluetooth)](https://www.amazon.fr/dp/B0GCSS4YLL) | La carte : ESP32-S3 + radio SX1262 + écran OLED. C'est elle qui reçoit les trames wM-Bus des compteurs |
 | [Coque pour LoRa ESP32 V3 avec antenne et batterie 3000 mAh tout-en-un, interface Type-C (version N35, noir)](https://www.amazon.fr/dp/B0FCC3K8KZ) | Boîtier de protection avec antenne et batterie intégrées |
 
-La coque est vendue pour la V3 de la carte. Vérifie que la V4 rentre bien avant de la fermer : position de l'écran, du connecteur USB-C et du connecteur d'antenne.
+La coque est vendue pour la V3 de la carte, mais elle est **100 % compatible avec la V4** : écran, connecteur USB-C et connecteur d'antenne tombent aux mêmes emplacements.
 
 ## Fichiers du dépôt
 
@@ -555,6 +555,26 @@ esphome logs compteur-eau-lora.yaml | python wmbus_log_to_csv.py -o releves.csv
 ```
 
 Une ligne par trame valide reçue, avec les mêmes colonnes que ci-dessus. Le statut est « connu » pour les compteurs déclarés dans la configuration ou décodés par l'ESP. Options : `--date`, `--sep` (défaut `;`), `--decimal` (défaut `,`), `--prefixe-propre`, `-a` pour ajouter à un CSV existant.
+
+## Notifications ntfy entre voisins (sans Home Assistant)
+
+Le dépôt compagnon **[Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy)** ajoute des notifications push [ntfy](https://ntfy.sh). L'ESP les envoie **lui-même** en HTTPS : elles ne passent ni par Home Assistant, ni par `notify`, ni par MQTT.
+
+- **Toi** : alertes (fuite confirmée, fuite de nuit, débit anormal, conso élevée, conso pendant une absence, compteur silencieux), fins d'alerte et bilan quotidien. Elles arrivent même si Home Assistant est arrêté.
+- **Chaque voisin** : bilan quotidien de **son** compteur (conso du jour + index) sur **son** sujet ntfy. Il le lit dans l'appli ntfy (Android, iOS, navigateur) ou dans sa propre domotique (Home Assistant, Jeedom, Domoticz, openHAB, Node-RED… : tout ce qui sait lire un flux HTTP JSON, SSE ou WebSocket). Un voisin n'a besoin d'**aucune** installation chez lui.
+
+Mise en place, en résumé :
+
+1. Un sujet aléatoire par personne dans `secrets.yaml` (`ntfy_topic_moi`, `ntfy_topic_v1` … `ntfy_topic_v4`, `""` = rien). Sur ntfy.sh, **le nom du sujet sert de mot de passe**.
+2. Ces sujets ajoutés aux `substitutions` de `compteur-eau-lora.yaml`.
+3. Le paquet ajouté à la configuration, sans rien modifier d'autre :
+   ```yaml
+   packages:
+     ntfy: github://Mathide-Team/Esphome-Compteur-wmbus-ntfy/ntfy.yaml@main
+   ```
+4. Flash, puis bouton **« ntfy - message de test »**.
+
+Détails (contenu des messages, priorités, abonnement depuis une autre domotique, serveur ntfy privé, limites de ntfy.sh) : voir le [README du dépôt ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy#readme).
 
 ## Prévenir les voisins (extension)
 

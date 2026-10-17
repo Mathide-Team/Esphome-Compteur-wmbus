@@ -323,6 +323,8 @@ views:
                 name: Seuil débit anormal
               - entity: number.compteur_eau_lora_seuil_conso_journaliere
                 name: Seuil conso journalière
+              - entity: number.compteur_eau_lora_compteur_silencieux_apres
+                name: Compteur silencieux après
           - type: entities
             title: Export CSV
             show_header_toggle: false

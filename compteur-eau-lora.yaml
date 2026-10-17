@@ -650,6 +650,18 @@ number:
     unit_of_measurement: "h"
     entity_category: config
   - platform: template
+    id: seuil_silence_h
+    name: "Compteur silencieux après"
+    optimistic: true
+    restore_value: true
+    initial_value: 6
+    min_value: 1
+    max_value: 72
+    step: 1
+    mode: box
+    unit_of_measurement: "h"
+    entity_category: config
+  - platform: template
     id: csv_intervalle_min
     name: "Export CSV - intervalle"
     optimistic: true
@@ -752,7 +764,7 @@ binary_sensor:
     lambda: |-
       auto now = id(ha_time).now();
       if (!now.is_valid() || id(g_rx_ts) == 0) return false;
-      return ((uint32_t) now.timestamp - id(g_rx_ts)) > 6 * 3600;
+      return ((uint32_t) now.timestamp - id(g_rx_ts)) > (uint32_t) id(seuil_silence_h).state * 3600;
 
 # ───────────────────────── Écran OLED (SSD1306 128x64 de la carte) ─────────────────────────
 

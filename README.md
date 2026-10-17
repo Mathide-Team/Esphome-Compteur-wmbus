@@ -459,13 +459,21 @@ Les secrets restent dans ton `secrets.yaml` : seules les variables locales leur 
 | Coût aujourd'hui / Coût mois | € = conso × prix au m³ |
 | Compteur eau - Dernière trame | Heure de la dernière trame décodée (HA affiche « il y a 3 minutes ») |
 | Heures de conso continue | Nombre d'heures consécutives avec consommation |
-| Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière | Seuils réglables depuis HA |
+| Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière, Compteur silencieux après | Seuils réglables depuis HA (communs à ton compteur et aux voisins ; silencieux : 6 h par défaut) |
 | Mode absence | Interrupteur |
 | Écran - extinction nocturne, Écran - extinction à, Écran - rallumage à | Interrupteur et heures (0 à 23) de l'extinction de l'OLED, 22 h → 7 h par défaut |
 | Bouton de la carte | État du bouton PRG (diagnostic) |
 | 6 capteurs « problème » | Voir [Alertes](#détection-de-fuite-et-alertes) |
 
-**Chaque voisin déclaré** (nom = `nomcompteurN`) : `Nom - Index` (m³), `Nom - Conso aujourd'hui` (L), `Nom - RSSI` et `Nom - Dernière trame` (diagnostic).
+**Chaque voisin déclaré** (nom = `nomcompteurN`) :
+
+| Entité | Description |
+|---|---|
+| Nom - Index | m³ |
+| Nom - Conso aujourd'hui | L |
+| Nom - Débit estimé | L/h, entre deux trames espacées d'au moins 120 s |
+| Nom - RSSI, Nom - Dernière trame | Diagnostic |
+| Nom - Fuite confirmée, Fuite suspectée (nuit), Débit anormal, Conso journalière anormale, Compteur silencieux | Les mêmes alertes que pour ton compteur, avec les **mêmes seuils** (pas de mode absence pour les voisins) |
 
 ## Calcul de la conso du jour
 
@@ -506,7 +514,7 @@ Si l'ESP ne connaît pas l'heure (ni HA ni Internet), l'écran reste allumé.
 
 ## Détection de fuite et alertes
 
-Uniquement pour le compteur de la maison.
+Pour ton compteur **et pour chaque voisin déclaré** : mêmes règles, mêmes seuils. Le mode absence ne concerne que ton compteur.
 
 | Alerte | Se déclenche quand |
 |---|---|
@@ -515,9 +523,11 @@ Uniquement pour le compteur de la maison.
 | Débit anormal | Débit estimé supérieur à `Seuil débit anormal` (1000 L/h par défaut) pendant 10 min |
 | Conso journalière anormale | Conso du jour supérieure à `Seuil conso journalière` (800 L par défaut) |
 | Conso pendant absence | `Mode absence` activé et au moins 1 L consommé pendant l'heure écoulée |
-| Compteur silencieux | Aucune trame reçue depuis plus de 6 h |
+| Compteur silencieux | Aucune trame reçue depuis plus de `Compteur silencieux après` heures (6 par défaut). Il faut avoir reçu au moins une trame depuis le démarrage de l'ESP |
 
 La résolution de l'index est de 1 L : le débit estimé est donc grossier pour les petits débits.
+
+Les alertes d'un voisin s'appellent « Dupont - Fuite confirmée »… Le paquet ntfy peut les envoyer sur le sujet de ce voisin (voir [Esphome-Compteur-wmbus-ntfy#5](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy/issues/5)).
 
 ## Tableau de bord Énergie (eau)
 
@@ -617,7 +627,7 @@ En plus du tableau de bord Énergie, `ha_dashboard_compteur_eau.yaml` décrit un
 | Section | Contenu |
 |---|---|
 | Tous les compteurs | Conso par jour sur 30 jours (toi + chaque voisin, en barres), RSSI radio de tous les compteurs sur 24 h |
-| Une section par voisin | Index, conso du jour, signal radio, conso par jour sur 30 jours |
+| Une section par voisin | Index, conso du jour, signal radio, dernière trame, débit, ses 5 alertes, conso par jour sur 30 jours |
 
 Depuis la racine du dépôt, à côté de ton `secrets.yaml` :
 

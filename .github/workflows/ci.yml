@@ -1,0 +1,67 @@
+name: CI
+
+"on":
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ESPHOME_VERSION: "2026.9.1"   # version validée (README) ; à monter volontairement
+
+jobs:
+  quality:
+    name: Qualité (lint, validation ESPHome)
+    runs-on: ${{ fromJSON(vars.RUNS_ON_LINUX || '{"group":"maison","labels":["self-hosted","linux"]}') }}
+
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v7
+
+      - name: Installation de uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Installation de Python
+        run: uv python install
+
+      - name: Lint YAML (yamllint --strict)
+        run: uvx yamllint==1.38.0 --strict -c .yamllint.yaml .
+
+      - name: Script de vérification des protections (syntaxe)
+        run: uv run --no-project python -m py_compile scripts/check_branch_protection.py
+
+      - name: Secrets factices (copie de secrets.example.yaml)
+        run: cp secrets.example.yaml secrets.yaml
+
+      - name: Validation ESPHome (esphome config)
+        # Valide le schéma complet (composants, broches, substitutions, secrets),
+        # sans compiler. La sortie (configuration résolue) n'est pas affichée.
+        run: uvx --from "esphome==${ESPHOME_VERSION}" esphome config compteur-eau-lora.yaml > /dev/null
+
+  compilation:
+    name: Compilation (esphome compile)
+    # Longue (ESP-IDF) : seulement à la demande et sur main, pas obligatoire.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: quality
+    runs-on: ${{ fromJSON(vars.RUNS_ON_LINUX || '{"group":"maison","labels":["self-hosted","linux"]}') }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v7
+
+      - name: Installation de uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Installation de Python
+        run: uv python install
+
+      - name: Secrets factices
+        run: cp secrets.example.yaml secrets.yaml
+
+      - name: Compilation du firmware
+        run: uvx --from "esphome==${ESPHOME_VERSION}" esphome compile compteur-eau-lora.yaml

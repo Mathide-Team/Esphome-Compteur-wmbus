@@ -40,6 +40,8 @@ La coque est vendue pour la V3 de la carte, mais elle est **100 % compatible ave
 | `secrets.example.yaml` | Modèle du `secrets.yaml` (à copier et remplir, ne jamais publier le vrai) |
 | `ha_automation_releves_csv.yaml` | Automatisation Home Assistant qui écrit le CSV |
 | `ha_dashboard_compteur_eau.yaml` | Tableau de bord Home Assistant « Compteur d'eau » |
+| `LICENSE` | Licence MIT |
+| `.github/` | CI, garde `dev` → `main`, règles de protection versionnées |
 | `wmbus_log_to_csv.py` | Extrait un CSV à partir d'un log ESPHome |
 
 ## Installation
@@ -602,6 +604,20 @@ L'automatisation sépare la construction de la ligne (`ligne`) de son envoi : il
   .esphome/
   ```
 - Portée radio : les compteurs lointains (RSSI inférieur à -90 dBm) sont reçus de façon irrégulière et leur index peut tarder à apparaître.
+
+## Contribuer
+
+Le dépôt suit le socle qualité de Mathide-Team :
+
+- **`main`** = branche de livraison, **`dev`** = branche d'intégration. On ne pousse jamais directement sur l'une ou l'autre.
+- Une branche par sujet, créée depuis `dev` (`feat/<n°>-…`, `fix/<n°>-…`, `docs/…`, `ci/…`), puis une **PR vers `dev`**.
+- Livraison : **PR `dev` → `main`**. Le check « Garde : PR vers main doit venir de dev » refuse toute autre branche source.
+- La CI (« Qualité (lint, validation ESPHome) ») doit passer : `yamllint --strict` et `esphome config`. Une compilation complète tourne sur `main` et à la demande.
+- Les protections de `main` et `dev` sont versionnées dans `.github/branch-protection/`. Le workflow « Protection des branches » signale chaque jour tout écart.
+
+## Licence
+
+[MIT](LICENSE) © 2026 Mathilde Deuscher.
 
 ## Crédits
 

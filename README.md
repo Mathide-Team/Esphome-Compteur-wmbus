@@ -23,6 +23,15 @@ Carte avec ESP32-S3, radio SX1262 (TCXO, commutateur RF sur DIO2) et OLED SSD130
 
 Logiciel : ESPHome (configuration validée avec **2026.9.1**), composant externe [`SzczepanLeon/esphome-components`](https://github.com/SzczepanLeon/esphome-components) (`wmbus_radio`, `wmbus_meter`, `wmbus_common`). Les compteurs lus sont des compteurs d'eau DME, driver `dme_07`.
 
+## Ma liste de courses
+
+| Article | Rôle |
+|---|---|
+| [Heemol Carte de développement LoRa 32 V4 ESP32 avec écran OLED 0,96" (ESP32-S3R2, SX1262, WiFi, Bluetooth)](https://www.amazon.fr/dp/B0GCSS4YLL) | La carte : ESP32-S3 + radio SX1262 + écran OLED. C'est elle qui reçoit les trames wM-Bus des compteurs |
+| [Coque pour LoRa ESP32 V3 avec antenne et batterie 3000 mAh tout-en-un, interface Type-C (version N35, noir)](https://www.amazon.fr/dp/B0FCC3K8KZ) | Boîtier de protection avec antenne et batterie intégrées |
+
+La coque est vendue pour la V3 de la carte. Vérifie que la V4 rentre bien avant de la fermer : position de l'écran, du connecteur USB-C et du connecteur d'antenne.
+
 ## Fichiers du dépôt
 
 | Fichier | Rôle |

@@ -56,10 +56,12 @@ Copie `secrets.example.yaml` en `secrets.yaml` et remplis-le. Les numéros de co
 | Clé | Contenu |
 |---|---|
 | `compteur0` | numéro de **ton** compteur |
-| `compteur1` … `compteurN` | numéros des compteurs voisins (un par voisin déclaré, jusqu'à 10) |
-| `nomcompteur1` … `nomcompteurN` | noms affichés dans HA (ex. `"Dupont"`) |
+| `type_compteur` | facultatif : `dme_07` (défaut, Grand Besançon), `izar` (Grand Belfort) ou `auto`, voir [Izar / DME](#izar--dme) |
+| `aes` | facultatif : clé AES de ton compteur, seulement si l'opérateur chiffre (absente = en clair) |
+| `compteur1` … `compteur10` | facultatifs : un **voisin existe dès que son `compteurN` est présent** |
+| `nomcompteurN`, `aesvN`, `typecompteurN` | facultatifs : nom affiché dans HA, clé AES et type du voisin N |
 
-La configuration fournie déclare 4 voisins. Pour en ajouter, en retirer ou changer le modèle d'un compteur voisin, voir [Voisins](#voisins--de-0-à-10).
+Rien à modifier dans `compteur-eau-lora.yaml` pour les voisins : voir [Voisins](#voisins--de-0-à-10).
 
 ### 2. Premier flash (par USB)
 
@@ -431,7 +433,7 @@ ESPHome Builder (module complémentaire de Home Assistant, ou tableau de bord ES
 
 **Option B : charger les modèles depuis GitHub (aucun fichier à copier)**
 
-Ces fichiers ne contiennent aucun secret : ESPHome peut les télécharger. Dans `compteur-eau-lora.yaml`, remplace la ligne `voisins:` de `packages:` par :
+Ces fichiers ne contiennent aucun secret : ESPHome peut les télécharger. Dans `compteur-eau-lora.yaml`, remplace la ligne `voisins: !include voisins/voisins.yaml` de `packages:` par :
 
 ```yaml
 packages:
@@ -442,15 +444,7 @@ packages:
     files: [voisins/voisins.yaml]
 ```
 
-Et, dans `substitutions:`, les deux modèles de ton compteur :
-
-```yaml
-  cle_0: { wmbus_meter: [{ id: !extend mon_compteur, key: "${ aes | default('') }" }] }
-  izar_0:
-    url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus
-    ref: main
-    files: [options/izar.yaml]
-```
+Ce seul paquet suffit : il apporte aussi `voisin.yaml`, `cle.yaml` et `options/izar.yaml`, pris dans le même dépôt (testé).
 
 Les secrets restent dans ton `secrets.yaml`. Il faut un accès Internet à la compilation.
 

@@ -5,7 +5,7 @@
 #  secrets.yaml requis :
 #    wifi_ssid, wifi_password, fallback_hotspot_ssid, fallback_hotspot_password,
 #    ota_password,
-#    compteur0 … compteur4   (chaînes entre guillemets, ex. "0x30703283"),
+#    compteur0 … compteur4   (chaînes entre guillemets, ex. "0x12345678"),
 #    nomcompteur1 … nomcompteur4
 #
 #  Export CSV : l'ESP n'écrit aucun fichier. Il envoie un évènement
@@ -14,7 +14,7 @@
 # ══════════════════════════════════════════════════════════════════════════════
 
 substitutions:
-  # Numéro de TON compteur (secret compteur0, au format "0x30703283", entre guillemets).
+  # Numéro de TON compteur (secret compteur0, au format "0x12345678", entre guillemets).
   # Sert au récepteur wM-Bus et à l'écran 1 (affiché sans le « 0x »)
   num_compteur: !secret compteur0
   nom_moi: "Mon compteur"   # nom écrit dans le CSV pour ton propre compteur

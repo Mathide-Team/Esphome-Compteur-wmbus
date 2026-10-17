@@ -410,6 +410,11 @@ conso du jour (L) = (index courant − 1er index du jour) × 1000
 
 Il affiche le compteur de la maison, une page toutes les 5 s :
 
+![Aperçu des écrans OLED (simulation) : index, signaux, alertes, index à 5 chiffres](docs/apercu-ecrans.png)
+
+Simulation des pages : index et conso du jour, signaux WiFi et radio, alertes (2 actives, puis 6 avec « +3 autres »), et index à partir de 1000 m³ (police réduite). Le numéro du compteur est masqué sur l'image.
+
+
 1. **Index** (police réduite à partir de 1000 m³), **conso du jour** et numéro du compteur.
 2. **Signaux** WiFi et wM-Bus : barres (4 niveaux) et dBm. Seuils WiFi : -55 / -67 / -75 / -85 dBm. Seuils radio : -60 / -75 / -90 / -100 dBm.
 3. **Alertes actives** (jusqu'à 4 lignes, puis « +N autres »). Cette page est sautée s'il n'y a aucune alerte.

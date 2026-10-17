@@ -1,0 +1,34 @@
+# options/izar.yaml : capteurs propres aux compteurs Izar (Diehl, brouillage PRIOS), pour TON compteur.
+# Inclus automatiquement par voisins/voisins.yaml si type_compteur vaut « izar » (secrets.yaml).
+# Champs du pilote izar (SzczepanLeon/esphome-components, wmbus_common/driver_izar.cpp).
+sensor:
+  - platform: wmbus_meter
+    parent_id: mon_compteur
+    field: last_month_total_m3
+    name: "Compteur eau - Index fin du mois dernier"
+    unit_of_measurement: "m³"
+    device_class: water
+    state_class: total_increasing
+    accuracy_decimals: 3
+  - platform: wmbus_meter
+    parent_id: mon_compteur
+    field: remaining_battery_life_y
+    name: "Compteur eau - Durée de vie de la pile"
+    unit_of_measurement: "ans"
+    icon: mdi:battery-clock
+    accuracy_decimals: 1
+    entity_category: diagnostic
+  - platform: wmbus_meter
+    parent_id: mon_compteur
+    field: transmit_period_s
+    name: "Compteur eau - Période d'émission"
+    unit_of_measurement: "s"
+    icon: mdi:timer-outline
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: wmbus_meter
+    parent_id: mon_compteur
+    field: previous_alarms
+    name: "Compteur eau - Alarmes précédentes"
+    entity_category: diagnostic

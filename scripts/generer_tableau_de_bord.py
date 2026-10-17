@@ -2,9 +2,9 @@
 """Génère le tableau de bord Home Assistant « Compteur d'eau » avec une vue par voisin déclaré.
 
 Le script lit :
-  - compteur-eau-lora.yaml : nom de l'appareil et voisins déclarés dans « packages: »
-    (modèle voisins/voisin.yaml, inclus localement ou depuis GitHub) ;
-  - secrets.yaml : valeurs des « !secret » (noms des voisins) ;
+  - compteur-eau-lora.yaml : nom de l'appareil et paquets inclus ;
+  - secrets.yaml : voisins (compteur1 … compteur10, nomcompteurN) si voisins/voisins.yaml est
+    inclus, et valeurs des « !secret » des voisins déclarés à la main (voisins/voisin.yaml) ;
   - ha_dashboard_compteur_eau.yaml : vue de base (ton compteur).
 
 Il règle aussi les jauges sur les seuils d'alerte (valeurs initiales de la configuration, ou
@@ -32,6 +32,8 @@ except ImportError:  # pragma: no cover
     sys.exit("PyYAML manquant : « pip install pyyaml » ou « uv run --with pyyaml python … »")
 
 MODELE_VOISIN = "voisins/voisin.yaml"
+VOISINS_AUTO = "voisins/voisins.yaml"   # voisins déduits de secrets.yaml
+FUSION_INCLUDE = re.compile(r"^[ \t]*<<:[ \t]*!include[ \t]+\S+[ \t]*(#.*)?\n", re.M)
 
 
 # ───────────────────────────── Lecture du YAML ESPHome ─────────────────────────────
@@ -75,8 +77,10 @@ def chargeur(secrets: dict) -> type:
 
 
 def lire_yaml(chemin: Path, secrets: dict | None = None):
-    with chemin.open(encoding="utf-8") as f:
-        return yaml.load(f, Loader=chargeur(secrets or {}))
+    texte = chemin.read_text(encoding="utf-8")
+    # « <<: !include secrets.yaml » (fusion YAML d'un fichier) : non géré par PyYAML, inutile ici
+    texte = FUSION_INCLUDE.sub("", texte)
+    return yaml.load(texte, Loader=chargeur(secrets or {}))
 
 
 def substituer(valeur, subs: dict):
@@ -86,29 +90,52 @@ def substituer(valeur, subs: dict):
     return re.sub(r"\$\{(\w+)\}|\$(\w+)", lambda m: str(subs.get(m.group(1) or m.group(2), m.group(0))), valeur)
 
 
-def voisins_declares(config: dict) -> list[dict]:
-    """Liste des voisins {i, nom, num} déclarés dans « packages: », triée par i."""
+def voisins_de_secrets(secrets: dict) -> list[dict]:
+    """Voisins de voisins/voisins.yaml : « compteurN » présent et non vide (N = 1 à 10)."""
+    return [
+        {"i": i, "nom": str(secrets.get(f"nomcompteur{i}") or f"Voisin {i}"), "num": str(secrets[f"compteur{i}"])}
+        for i in range(1, 11)
+        if secrets.get(f"compteur{i}") not in (None, "")
+    ]
+
+
+def chemins_paquet(pkg) -> list[tuple[str, dict | None]]:
+    """(fichier, variables) d'un paquet : !include local, ou paquet distant (url + files)."""
+    if isinstance(pkg, Include):
+        return [(pkg.fichier.replace("\\", "/"), pkg.variables)]
+    if isinstance(pkg, dict) and "files" in pkg:
+        return [
+            (str(f.get("path", "")), f.get("vars") or {}) if isinstance(f, dict) else (str(f), None)
+            for f in pkg["files"] or []
+        ]
+    if isinstance(pkg, str) and pkg.startswith("github://"):
+        return [(pkg.split("@")[0], None)]
+    return []
+
+
+def voisins_declares(config: dict, secrets: dict | None = None) -> list[dict]:
+    """Liste des voisins {i, nom, num} : déduits de secrets.yaml et/ou déclarés à la main."""
     subs = config.get("substitutions") or {}
     trouves = []
     for cle, pkg in (config.get("packages") or {}).items():
-        variables = None
-        if isinstance(pkg, Include) and pkg.fichier.replace("\\", "/").endswith(MODELE_VOISIN):
-            variables = pkg.variables
-        elif isinstance(pkg, dict) and "files" in pkg:  # paquet distant (GitHub)
-            for f in pkg["files"] or []:
-                if isinstance(f, dict) and str(f.get("path", "")).endswith(MODELE_VOISIN):
-                    variables = f.get("vars") or {}
-        if variables is None:
-            continue
-        v = {k: substituer(val, subs) for k, val in variables.items()}
-        if "i" not in v or "nom" not in v:
-            sys.exit(f"Paquet « {cle} » : variables i et nom obligatoires")
-        trouves.append({"i": int(v["i"]), "nom": str(v["nom"]), "num": str(v.get("num", ""))})
+        for fichier, variables in chemins_paquet(pkg):
+            if fichier.endswith(VOISINS_AUTO):
+                trouves += voisins_de_secrets(secrets or {})
+            elif fichier.endswith(MODELE_VOISIN):
+                trouves.append(voisin_manuel(cle, variables or {}, subs))
     numeros = [v["i"] for v in trouves]
     doublons = {i for i in numeros if numeros.count(i) > 1}
     if doublons:
         sys.exit(f"Numéro de voisin en double : {sorted(doublons)}")
     return sorted(trouves, key=lambda v: v["i"])
+
+
+def voisin_manuel(cle: str, variables: dict, subs: dict) -> dict:
+    """Voisin déclaré par une ligne « voisinN: !include { file: voisins/voisin.yaml, vars: … } »."""
+    v = {k: substituer(val, subs) for k, val in variables.items()}
+    if "i" not in v or "nom" not in v:
+        sys.exit(f"Paquet « {cle} » : variables i et nom obligatoires")
+    return {"i": int(v["i"]), "nom": str(v["nom"]), "num": str(v.get("num", ""))}
 
 
 # ───────────────────────────── Identifiants Home Assistant ─────────────────────────────
@@ -131,7 +158,7 @@ def vue_voisins(voisins: list[dict], appareil: str) -> dict:
             "title": "Voisins", "path": "voisins", "icon": "mdi:account-group", "type": "sections",
             "sections": [{"type": "grid", "cards": [{
                 "type": "markdown",
-                "content": "Aucun voisin déclaré dans `compteur-eau-lora.yaml` (voir README, « Voisins »).",
+                "content": "Aucun voisin dans `secrets.yaml` (compteur1 … compteur10, voir README, « Voisins »).",
             }]}],
         }
 
@@ -304,7 +331,7 @@ def main() -> None:
 
     esphome = config.get("esphome") or {}
     appareil = args.appareil or esphome.get("friendly_name") or esphome.get("name", "compteur-eau-lora")
-    voisins = voisins_declares(config)
+    voisins = voisins_declares(config, secrets)
 
     tableau = lire_yaml(args.base)
     vues = [v for v in tableau.get("views", []) if v.get("path") != "voisins"]

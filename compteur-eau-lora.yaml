@@ -5,11 +5,15 @@
 #  secrets.yaml requis :
 #    wifi_ssid, wifi_password, fallback_hotspot_ssid, fallback_hotspot_password,
 #    ota_password,
-#    compteur0               (ton compteur, chaîne entre guillemets, ex. "0x12345678"),
-#    compteur1 … compteurN et nomcompteur1 … nomcompteurN pour les voisins déclarés
+#    compteur0               (ton compteur, chaîne entre guillemets, ex. "0x12345678").
+#  Facultatifs (absents = valeur par défaut) :
+#    type_compteur           dme_07 (Grand Besançon, défaut), izar (Grand Belfort) ou auto
+#    aes                     clé AES de ton compteur (absente ou "" = trames en clair)
+#    compteur1 … compteur10  voisins : un voisin existe dès que son « compteurN » est présent,
+#                            avec nomcompteurN, aesvN, typecompteurN facultatifs
 #
-#  Voisins : de 0 à 10, une ligne chacun dans « packages: » (fin de la section suivante),
-#  modèle voisins/voisin.yaml. Voir README, « Voisins ».
+#  Voisins : rien à écrire ici, voisins/voisins.yaml les lit dans secrets.yaml.
+#  Voir README, « Voisins » et « Izar / DME ».
 #
 #  Export CSV : l'ESP n'écrit aucun fichier. Il envoie un évènement
 #  « esphome.wmbus_trame » à Home Assistant pour chaque compteur entendu (connu
@@ -17,6 +21,10 @@
 # ══════════════════════════════════════════════════════════════════════════════
 
 substitutions:
+  # Toutes les entrées de secrets.yaml deviennent des substitutions : voisins, clés et type
+  # facultatifs y sont testés (« absent = valeur par défaut »). Les valeurs restent masquées
+  # dans « esphome config », comme avec !secret.
+  <<: !include secrets.yaml
   # Numéro de TON compteur (secret compteur0, au format "0x12345678", entre guillemets).
   # Sert au récepteur wM-Bus et à l'écran 1 (affiché sans le « 0x »)
   num_compteur: !secret compteur0
@@ -26,16 +34,12 @@ substitutions:
   # Police des pictogrammes (Material Design Icons, version figée)
   mdi_url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
 
-# ── Voisins : une ligne par voisin (0 à 10), i = 1 à 10 sans doublon ──
-# Ajouter un voisin : compteurN et nomcompteurN dans secrets.yaml, puis une ligne ici.
-# Retirer un voisin : supprimer sa ligne (ses secrets peuvent rester).
-# Autre modèle de compteur : ajouter « type: izar » (par ex.) dans vars.
-# ESPHome Builder, ou modèle chargé depuis GitHub sans copier de fichier : voir README, « Voisins ».
+# ── Voisins (déduits de secrets.yaml : compteur1 … compteur10), clé AES et capteurs Izar de ton
+#    compteur : tout passe par voisins/voisins.yaml, selon les entrées présentes dans secrets.yaml.
+# Ajouter un voisin : compteurN (et nomcompteurN) dans secrets.yaml. Retirer : supprimer compteurN.
+# ESPHome Builder, ou modèles chargés depuis GitHub sans copier de fichier : voir README, « Voisins ».
 packages:
-  voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }
-  voisin2: !include { file: voisins/voisin.yaml, vars: { i: 2, num: !secret compteur2, nom: !secret nomcompteur2 } }
-  voisin3: !include { file: voisins/voisin.yaml, vars: { i: 3, num: !secret compteur3, nom: !secret nomcompteur3 } }
-  voisin4: !include { file: voisins/voisin.yaml, vars: { i: 4, num: !secret compteur4, nom: !secret nomcompteur4 } }
+  voisins: !include voisins/voisins.yaml
 
 esphome:
   name: compteur-eau-lora
@@ -300,8 +304,12 @@ wmbus_radio:
             char buf[9];
             snprintf(buf, sizeof(buf), "%08X", (unsigned int) idn);
             int rssi = (int) frame->rssi();
-            ESP_LOGD("csv", "Compteur %s (%s) RSSI %d dBm | en-tete %02X%02X%02X%02X %02X%02X%02X%02X%02X%02X",
-                     buf, slot >= 0 ? "connu" : "inconnu", rssi,
+            // Famille d'après la version de l'en-tête (octet 8 si le n° est aux octets 4-7) :
+            // 0x78 = Izar (type_compteur: izar), 0x7b = DME (dme_07). Aide au choix de type_compteur.
+            uint8_t version = d[8];
+            const char *famille = (id(g_id_off) != 4) ? "?" : version == 0x78 ? "Izar" : version == 0x7b ? "DME" : "autre";
+            ESP_LOGD("csv", "Compteur %s (%s, %s, version %02X) RSSI %d dBm | en-tete %02X%02X%02X%02X %02X%02X%02X%02X%02X%02X",
+                     buf, slot >= 0 ? "connu" : "inconnu", famille, version, rssi,
                      d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9]);
             id(envoi_trame).execute(std::string(buf), rssi, slot);
 
@@ -311,7 +319,7 @@ wmbus_radio:
 wmbus_meter:
   - id: mon_compteur
     meter_id: ${num_compteur}
-    type: dme_07
+    type: ${ type_compteur | default('dme_07') }   # secrets.yaml : dme_07, izar ou auto
     mode: [T1]
 
 # ───────────────────────── Envoi d'un évènement vers Home Assistant ─────────────────────────
@@ -550,7 +558,8 @@ text_sensor:
     entity_category: diagnostic
   - platform: wmbus_meter
     parent_id: mon_compteur
-    field: status
+    # dme_07 : « status » ; izar : « current_alarms » (no_alarm, leakage, meter_blocked…)
+    field: ${ 'current_alarms' if (type_compteur | default('dme_07')) == 'izar' else 'status' }
     name: "Compteur eau - Statut"
     entity_category: diagnostic
 

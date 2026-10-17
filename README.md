@@ -56,10 +56,12 @@ Copie `secrets.example.yaml` en `secrets.yaml` et remplis-le. Les numéros de co
 | Clé | Contenu |
 |---|---|
 | `compteur0` | numéro de **ton** compteur |
-| `compteur1` … `compteurN` | numéros des compteurs voisins (un par voisin déclaré, jusqu'à 10) |
-| `nomcompteur1` … `nomcompteurN` | noms affichés dans HA (ex. `"Dupont"`) |
+| `type_compteur` | facultatif : `dme_07` (défaut, Grand Besançon), `izar` (Grand Belfort) ou `auto`, voir [Izar / DME](#izar--dme) |
+| `aes` | facultatif : clé AES de ton compteur, seulement si l'opérateur chiffre (absente = en clair) |
+| `compteur1` … `compteur10` | facultatifs : un **voisin existe dès que son `compteurN` est présent** |
+| `nomcompteurN`, `aesvN`, `typecompteurN` | facultatifs : nom affiché dans HA, clé AES et type du voisin N |
 
-La configuration fournie déclare 4 voisins. Pour en ajouter, en retirer ou changer le modèle d'un compteur voisin, voir [Voisins](#voisins--de-0-à-10).
+Rien à modifier dans `compteur-eau-lora.yaml` pour les voisins : voir [Voisins](#voisins--de-0-à-10).
 
 ### 2. Premier flash (par USB)
 
@@ -379,66 +381,111 @@ SSD1306 128×64 en I2C à l'adresse `0x3C`, reset sur GPIO21, redessiné toutes 
 
 ## Voisins : de 0 à 10
 
-Chaque voisin est **une ligne** dans `compteur-eau-lora.yaml`, qui inclut le modèle `voisins/voisin.yaml` avec ses variables :
+Les voisins sont **déduits de `secrets.yaml`** : rien à écrire dans `compteur-eau-lora.yaml`. Un voisin N (1 à 10) existe dès que `compteurN` y est présent et non vide :
 
 ```yaml
-packages:
-  voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }
-  voisin2: !include { file: voisins/voisin.yaml, vars: { i: 2, num: !secret compteur2, nom: !secret nomcompteur2 } }
+compteur1: "0x23456789"      # obligatoire pour que le voisin existe
+nomcompteur1: "Dupont"       # facultatif : « Voisin 1 » par défaut
+# aesv1: "…32 hex…"          # facultatif : clé AES de son compteur (absente ou "" = en clair)
+# typecompteur1: "izar"      # facultatif : s'il diffère de type_compteur
 ```
 
-| Variable | Rôle |
+| Entrée | Rôle |
 |---|---|
-| `i` | Numéro du voisin, **de 1 à 10, sans doublon**. Il fixe les identifiants internes (`v1_total`, `compteur_v1`…) : ne le change pas pour un voisin existant, sinon son 1er index du jour mémorisé est perdu |
-| `num` | Numéro du compteur, `"0x12345678"` (secret `compteurN`) |
-| `nom` | Nom affiché dans HA (secret `nomcompteurN`) : entités « Dupont - Index », « Dupont - RSSI », « Dupont - Conso aujourd'hui » |
-| `type` | Facultatif : driver `wmbus_meter` du compteur, `dme_07` par défaut (ex. `type: izar`) |
+| `compteurN` | Numéro du compteur, avec `0x` (ex. `"0x23456789"`), N de 1 à 10. **Garde le même N pour un voisin** : il fixe ses identifiants internes (`v1_total`, `compteur_v1`…) et donc son historique |
+| `nomcompteurN` | Nom affiché dans HA : « Dupont - Index », « Dupont - RSSI », « Dupont - Conso aujourd'hui »… |
+| `aesvN` | Clé AES-128 de son compteur, si l'opérateur chiffre les trames (voir [Izar / DME](#izar--dme)) |
+| `typecompteurN` | Pilote de son compteur, si différent de `type_compteur` |
 
-**Ajouter un voisin** : ajoute `compteurN` et `nomcompteurN` dans `secrets.yaml`, puis une ligne `voisinN` avec le même `i: N`. Recompile et installe (OTA).
+- **Ajouter un voisin** : ajoute `compteurN` (et `nomcompteurN`) dans `secrets.yaml`, puis recompile et installe (OTA).
+- **Retirer un voisin** : supprime ou commente `compteurN`, ou mets-le à `""`. Dans HA, ses entités passent « indisponibles » : supprime-les depuis la page de l'appareil.
+- **Aucun voisin** : aucun `compteurN`.
+- Les emplacements peuvent avoir des trous (voisins 1, 2 et 5 par exemple).
 
-**Retirer un voisin** : supprime sa ligne. Ses secrets peuvent rester. Dans HA, ses entités passent « indisponibles » : supprime-les depuis la page de l'appareil.
+Comment ça marche : `compteur-eau-lora.yaml` fusionne `secrets.yaml` dans ses `substitutions` (`<<: !include secrets.yaml`). [`voisins/voisins.yaml`](voisins/voisins.yaml) prévoit alors 10 emplacements, et chacun n'inclut le modèle [`voisins/voisin.yaml`](voisins/voisin.yaml) que si son `compteurN` existe. Ce sont les paquets conditionnels d'ESPHome (expressions Jinja, ESPHome ≥ 2025.x). Les valeurs restent masquées dans « Validate » et `esphome config`, comme avec `!secret`.
 
-**Aucun voisin** : supprime toutes les lignes `voisinN` et remplace `packages:` par `packages: {}`.
+> **Mise à jour depuis la version avec une ligne par voisin** : remplace les lignes `voisinN: !include …` par `voisins: !include voisins/voisins.yaml` (déjà fait dans ce fichier). Ton `secrets.yaml` ne change pas : `compteur1`… `compteur4` et `nomcompteur1`… `nomcompteur4` y sont déjà, avec les mêmes N. L'historique est donc conservé. La déclaration à la main reste possible, **à la place** de `voisins/voisins.yaml` (pas en plus) : `voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }`.
 
-> Paquet ntfy : chaque voisin y a aussi sa ligne (`ntfy-voisin.yaml`, même `i`), avec son sujet. Il reçoit son bilan et les alertes de son compteur. Voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy). Il faut la version du paquet qui gère les voisins dynamiques : les anciennes versions (4 voisins fixes, `id: ntfy_time`) ne compilent plus avec cette configuration.
+> Paquet ntfy : chaque voisin y reçoit son bilan et les alertes de son compteur sur son sujet `ntfy_topic_vN`, également déduit de `secrets.yaml`. Voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy).
 
 ### Dans ESPHome Builder
 
-ESPHome Builder (module complémentaire de Home Assistant, ou tableau de bord ESPHome) range ses fichiers dans le dossier `esphome` de la configuration HA (`/config/esphome/`). Son éditeur ne modifie que les fichiers d'appareils et ne sait pas créer de dossier. Deux façons de fournir `voisins/voisin.yaml` :
+ESPHome Builder (module complémentaire de Home Assistant, ou tableau de bord ESPHome) range ses fichiers dans le dossier `esphome` de la configuration HA (`/config/esphome/`). Son éditeur ne modifie que les fichiers d'appareils et ne sait pas créer de dossier. Les voisins se gèrent **uniquement dans les secrets** (bouton **Secrets** en haut à droite du Builder). Il reste à fournir les fichiers des dossiers `voisins/` et `options/`, de l'une des deux façons suivantes.
 
-**Option A : copier le fichier (hors ligne, version figée)**
+**Option A : copier les fichiers (hors ligne, version figée)**
 
 1. Installe un module d'accès aux fichiers : **File editor** ou **Studio Code Server** (Paramètres → Modules complémentaires → Boutique), ou le partage réseau **Samba share**.
-2. Dans le dossier `esphome`, crée le dossier **`voisins`**, puis le fichier **`voisins/voisin.yaml`** avec le contenu de [voisins/voisin.yaml](voisins/voisin.yaml).
+2. Dans le dossier `esphome`, crée les dossiers **`voisins`** et **`options`**, puis copie [voisins/voisins.yaml](voisins/voisins.yaml), [voisins/voisin.yaml](voisins/voisin.yaml), [voisins/cle.yaml](voisins/cle.yaml) et [options/izar.yaml](options/izar.yaml).
 3. Vérifie l'arborescence :
    ```
    esphome/
    ├── compteur-eau-lora.yaml
    ├── secrets.yaml
+   ├── options/
+   │   └── izar.yaml
    └── voisins/
-       └── voisin.yaml
+       ├── cle.yaml
+       ├── voisin.yaml
+       └── voisins.yaml
    ```
-   Le Builder n'affiche que les fichiers à la racine de `esphome/` : le modèle, rangé dans `voisins/`, n'apparaît pas comme un faux appareil.
-4. Dans le Builder, ouvre `compteur-eau-lora` → **Edit**, ajuste les lignes `voisinN`, puis **Validate** et **Install → Wirelessly**.
+   Le Builder n'affiche que les fichiers à la racine de `esphome/` : les modèles, rangés dans des sous-dossiers, n'apparaissent pas comme de faux appareils.
+4. Dans le Builder : **Secrets** pour les voisins, puis `compteur-eau-lora` → **Validate** et **Install → Wirelessly**.
 
-Le Builder a aussi son propre `secrets.yaml` (bouton **Secrets** en haut à droite) : c'est là que vont `compteur5`, `nomcompteur5`…
+**Option B : charger les modèles depuis GitHub (aucun fichier à copier)**
 
-**Option B : charger le modèle depuis GitHub (aucun fichier à copier)**
-
-`voisins/voisin.yaml` ne contient aucun secret : ESPHome peut le télécharger. Remplace chaque ligne `voisinN` par :
+Ces fichiers ne contiennent aucun secret : ESPHome peut les télécharger. Dans `compteur-eau-lora.yaml`, remplace la ligne `voisins: !include voisins/voisins.yaml` de `packages:` par :
 
 ```yaml
 packages:
-  voisin1:
+  voisins:
     url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus
-    ref: main            # ou un tag de version, pour figer le modèle
+    ref: main            # ou un tag de version, pour figer les modèles
     refresh: 1d
-    files:
-      - path: voisins/voisin.yaml
-        vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 }
+    files: [voisins/voisins.yaml]
 ```
 
-Les secrets restent dans ton `secrets.yaml` : seules les variables locales leur font référence. Il faut un accès Internet à la compilation.
+Ce seul paquet suffit : il apporte aussi `voisin.yaml`, `cle.yaml` et `options/izar.yaml`, pris dans le même dépôt (testé).
+
+Les secrets restent dans ton `secrets.yaml`. Il faut un accès Internet à la compilation.
+
+## Izar / DME
+
+Les deux familles viennent de Diehl Metering et portent le même code fabricant `DME` dans l'en-tête radio, mais elles n'utilisent **pas le même pilote** :
+
+| | DME | Izar |
+|---|---|---|
+| Collectivité (retours connus) | **Grand Besançon** | **Grand Belfort** |
+| `type_compteur` | `dme_07` (défaut) | `izar` |
+| Version dans l'en-tête radio | `0x7b` | `0x78` |
+| Protection | wM-Bus / OMS, **en clair** à ce jour | brouillage PRIOS, décodé par le pilote avec les clés Diehl par défaut : **en clair** à ce jour |
+| Champ « Statut » | `status` | `current_alarms` (`no_alarm`, `leakage`, `meter_blocked`…) |
+| Capteurs en plus | — | index fin du mois dernier, durée de vie de la pile, période d'émission, alarmes précédentes (ajoutés automatiquement, [options/izar.yaml](options/izar.yaml)) |
+
+Champs relevés dans `driver_dme_07.cpp` et `driver_izar.cpp` du composant [SzczepanLeon/esphome-components](https://github.com/SzczepanLeon/esphome-components) (commit `d9abe6f`).
+
+**Réglage**, dans `secrets.yaml` :
+
+```yaml
+type_compteur: "izar"     # dme_07 (défaut, Besançon) | izar (Belfort) | auto
+```
+
+- `type_compteur` s'applique à ton compteur et, par défaut, à tous les voisins. Un voisin d'une autre famille prend `typecompteurN`.
+- `auto` laisse le composant choisir le pilote à chaque trame. C'est pratique pour un mélange, mais les champs propres à un pilote, comme « Statut », peuvent manquer.
+- **Dans le doute**, regarde les journaux : chaque trame entendue y est classée `DME` (version `7B`) ou `Izar` (version `78`), y compris pour les compteurs inconnus :
+  ```
+  [D][csv] Compteur 23456789 (connu, Izar, version 78) RSSI -83 dBm | …
+  ```
+
+**Clé AES**, seulement si l'opérateur chiffre les trames, ce qui n'est pas le cas aujourd'hui à Besançon ni à Belfort :
+
+```yaml
+aes: "00112233445566778899AABBCCDDEEFF"     # ton compteur (32 caractères hexadécimaux)
+aesv1: "…"                                  # voisin 1, aesv2 pour le voisin 2…
+```
+
+- Absente ou `""` : trames lues en clair. Il n'y a rien à créer si tu n'en as pas besoin.
+- La clé appartient à l'abonné ou à l'opérateur. Ne la publie jamais, et n'utilise celle d'un voisin qu'avec son accord écrit.
+- Si l'opérateur active le chiffrement, ou change la clé PRIOS d'Izar, **les voisins sans clé tombent** : leurs trames ne sont plus décodées. Ils repassent alors en « inconnu », avec le numéro et le RSSI, sans index. Ton compteur reste lisible avec ta propre clé.
 
 ## Entités Home Assistant
 

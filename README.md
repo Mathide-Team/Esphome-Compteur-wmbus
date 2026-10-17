@@ -8,7 +8,7 @@ Lecture radio (wM-Bus, mode T1, 868,95 MHz) du compteur d'eau de la maison **et*
 - **Jusqu'à 4 compteurs voisins** : index, conso du jour et RSSI de chacun (pas d'alertes).
 - **Écran OLED** (compteur de la maison) : 3 pages qui tournent toutes les 5 s.
 - **Compteurs inconnus** : tous les compteurs captés par la radio, déclarés ou non, sont aussi envoyés à HA sous forme d'événement (numéro + RSSI).
-- **Export CSV** : HA ajoute une ligne par compteur (au plus une par intervalle réglable, 15 min par défaut) à un fichier CSV. Un script Python extrait aussi un CSV à partir des logs ESPHome.
+- **Export CSV** : HA ajoute une ligne par compteur (au plus une par intervalle réglable, 15 min par défaut) à un fichier CSV, sans code Python ni modification de `configuration.yaml` ([tutoriel](docs/export-csv-home-assistant.md)).
 
 ## Matériel
 
@@ -38,11 +38,11 @@ La coque est vendue pour la V3 de la carte, mais elle est **100 % compatible ave
 |---|---|
 | `compteur-eau-lora.yaml` | Configuration ESPHome complète (ton compteur + 4 voisins + écran) |
 | `secrets.example.yaml` | Modèle du `secrets.yaml` (à copier et remplir, ne jamais publier le vrai) |
-| `ha_automation_releves_csv.yaml` | Automatisation Home Assistant qui écrit le CSV |
+| `ha_automation_releves_csv.yaml` | Automatisation Home Assistant qui écrit le CSV (à coller dans l'éditeur d'automatisations) |
+| `docs/export-csv-home-assistant.md` | Tutoriel de l'export CSV dans Home Assistant |
 | `ha_dashboard_compteur_eau.yaml` | Tableau de bord Home Assistant « Compteur d'eau » |
 | `LICENSE` | Licence MIT |
 | `.github/` | CI, garde `dev` → `main`, règles de protection versionnées |
-| `wmbus_log_to_csv.py` | Extrait un CSV à partir d'un log ESPHome |
 
 ## Installation
 
@@ -515,48 +515,24 @@ Remarques :
 
 ## Export CSV dans Home Assistant
 
-**Principe** : l'ESP ne peut pas écrire de fichier dans HA. Il envoie donc à HA, pour **chaque compteur capté** (connu ou inconnu), un événement `esphome.wmbus_trame` contenant `compteur` (8 chiffres, sans `0x`), `nom`, `statut`, `rssi_dbm`, `index_m3` et `conso_jour_l` (voir [le script `envoi_trame`](#script-envoi_trame--lévénement-envoyé-à-home-assistant)). Il en envoie au plus un par compteur pendant la durée « Export CSV - intervalle » (15 min par défaut, réglable depuis HA). Une automatisation HA ajoute alors une ligne au CSV avec l'action `notify.send_message` de l'intégration **File**.
+L'ESP ne peut pas écrire de fichier dans HA. Pour **chaque compteur capté** (connu ou inconnu), il envoie donc à HA un évènement `esphome.wmbus_trame`. Celui-ci contient `compteur`, `nom`, `statut`, `rssi_dbm`, `index_m3` et `conso_jour_l` : voir [le script `envoi_trame`](#script-envoi_trame--lévénement-envoyé-à-home-assistant). L'ESP en envoie au plus un par compteur et par « Export CSV - intervalle » (15 min par défaut). Une automatisation HA ajoute la ligne au CSV avec `notify.send_message` et l'intégration **File**.
 
-1. **Autoriser l'appareil** : Paramètres → Appareils et services → ESPHome → ton appareil → Configurer → autoriser l'appareil à effectuer des actions Home Assistant. Sans cela, HA ignore les événements.
-2. **Autoriser le dossier** dans `configuration.yaml`, puis redémarrer HA :
-   ```yaml
-   homeassistant:
-     allowlist_external_dirs:
-       - /config/releves
-   ```
-3. **Créer le fichier** `/config/releves/releves_compteurs.csv` avec uniquement la ligne d'en-tête ci-dessous. Sur un fichier vide, l'intégration File ajoute sa propre ligne d'introduction ; avec l'en-tête déjà en place, le fichier reste un CSV propre :
-   ```
-   timestamp;compteur;statut;rssi_dbm;index_m3;conso_jour_l
-   ```
-4. **Ajouter l'intégration File** (Paramètres → Appareils et services → Ajouter une intégration → File), choisir la notification, chemin `/config/releves/releves_compteurs.csv`, horodatage désactivé (la ligne a déjà le sien). Note l'identifiant de l'entité `notify.…` créée.
-5. **Ajouter l'automatisation** `ha_automation_releves_csv.yaml` après l'avoir adaptée : la table `compteurs` (numéros sans `0x` et identifiants des entités index / conso de chaque compteur connu) et l'entité `notify`.
-6. **Vérifier** : Outils de développement → Événements → écouter `esphome.wmbus_trame`.
+**Tout se fait dans l'interface de HA, sans modifier `configuration.yaml`**, en écrivant le fichier dans `/media`, dossier autorisé par défaut.
 
-Ne place pas le fichier dans `/config/www` : son contenu serait accessible sans authentification à l'adresse `/local/`.
+En bref :
+1. Autoriser l'appareil ESPHome à effectuer des actions Home Assistant.
+2. Ajouter l'intégration File (notification) sur `/media/releves_compteurs.csv`, sans horodatage.
+3. Créer l'automatisation [`ha_automation_releves_csv.yaml`](ha_automation_releves_csv.yaml) dans l'éditeur (⋮ → Modifier en YAML), en adaptant l'entité `notify`.
 
-Exemple de fichier obtenu (numéros fictifs) :
+**Tutoriel pas à pas, contrôles, dépannage et variantes : [docs/export-csv-home-assistant.md](docs/export-csv-home-assistant.md).**
 
 ```
-timestamp;compteur;statut;rssi_dbm;index_m3;conso_jour_l
-2026-10-17 00:42:17;12345678;connu;-40;337,693;12
-2026-10-17 00:42:19;23456789;connu;-61;1204,512;85
-2026-10-17 00:42:20;99999999;inconnu;-70;;
+timestamp;compteur;nom;statut;rssi_dbm;index_m3;conso_jour_l
+2026-10-17 08:15:02;12345678;Mon compteur;connu;-41;337,693;12
+2026-10-17 08:15:09;99999999;;inconnu;-88;;
 ```
 
-> **Attention** : `ha_automation_releves_csv.yaml` écoute encore `esphome.wmbus_frame` et lit `trigger.event.data.rssi`. Remplace-les par `esphome.wmbus_trame` et `trigger.event.data.rssi_dbm`, sinon l'automatisation ne se déclenche pas.
-
-Pour les compteurs **inconnus** (non déclarés), seuls le numéro et le RSSI sont disponibles : leurs trames sont chiffrées et l'ESP ne les décode pas.
-
-**Autre piste, sans configuration** : le panneau Historique de HA a un bouton « Télécharger les données » (export CSV des entités choisies). Il ne couvre que les compteurs déclarés, et le recorder ne garde par défaut que 10 jours de données détaillées.
-
-### Extraire un CSV depuis les logs
-
-```bash
-python wmbus_log_to_csv.py mon.log -o releves.csv
-esphome logs compteur-eau-lora.yaml | python wmbus_log_to_csv.py -o releves.csv
-```
-
-Une ligne par trame valide reçue, avec les mêmes colonnes que ci-dessus. Le statut est « connu » pour les compteurs déclarés dans la configuration ou décodés par l'ESP. Options : `--date`, `--sep` (défaut `;`), `--decimal` (défaut `,`), `--prefixe-propre`, `-a` pour ajouter à un CSV existant.
+Exemple avec des numéros fictifs. Pour les compteurs **inconnus**, seuls le numéro et le RSSI sont disponibles : leurs trames sont chiffrées et l'ESP ne les décode pas. Ne place pas le fichier dans `/config/www` : son contenu y serait public, à l'adresse `/local/`.
 
 ## Notifications ntfy entre voisins (sans Home Assistant)
 
@@ -580,7 +556,7 @@ Détails (contenu des messages, priorités, abonnement depuis une autre domotiqu
 
 ## Prévenir les voisins (extension)
 
-L'automatisation sépare la construction de la ligne (`ligne`) de son envoi : il suffit d'ajouter une action après `notify.send_message`. Le fichier contient un bloc commenté prêt à l'emploi pour **MQTT** (un topic par compteur). On peut aussi utiliser `notify.mobile_app_…`, Telegram ou un e-mail. Chaque voisin ne doit recevoir que **son** compteur (un topic et des droits de broker par voisin).
+L'automatisation construit d'abord la ligne (`ligne`), puis l'envoie : il suffit d'ajouter une action après `notify.send_message`. Le fichier contient un bloc commenté prêt à l'emploi pour **MQTT** : un topic par compteur, compteurs connus seulement. On peut aussi utiliser `notify.mobile_app_…`, Telegram, un e-mail ou ntfy. Chaque voisin ne doit recevoir que **son** compteur : un topic et des droits de broker par voisin. Voir [Prévenir les voisins](docs/export-csv-home-assistant.md#prévenir-les-voisins).
 
 ## Dépannage
 
@@ -589,7 +565,7 @@ L'automatisation sépare la construction de la ligne (`ligne`) de son envoi : il
 | Log : `Telegram not handled by any handler` | Trame d'un compteur non déclaré. Normal pour les compteurs des autres. Pour en lire un, ajoute son numéro dans `secrets.yaml` |
 | Trames d'un compteur reçues mais index vide | Vérifier le `type` (driver) et la clé de chiffrement éventuelle (option `key` du composant `wmbus_meter`, voir sa documentation) |
 | Écran noir au démarrage | Vext doit être allumé avant l'init de l'OLED : c'est le rôle de `on_boot` (priorité 799). Ne pas la modifier |
-| Conso du jour à 0 | Normal avant la première trame de la journée ou juste après un redémarrage |
+| Conso du jour à 0 | Normal avant la 2e trame de la journée (la 1re fixe le « 1er index du jour »). Sinon, regarde dans les journaux de l'ESP les lignes `[conso]` : « 1er index du jour », « Conso du jour : … L » ou « Heure non synchronisée avec HA » |
 | HA ne reçoit pas les événements | Vérifier l'autorisation de l'appareil (étape 1 de l'export CSV) |
 | Erreur de compilation sur un `meter_id` | Le numéro doit être entre guillemets avec `0x` dans `secrets.yaml` |
 

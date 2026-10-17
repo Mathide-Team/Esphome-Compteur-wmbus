@@ -162,13 +162,12 @@ Cette section suit `compteur-eau-lora.yaml` bloc par bloc, dans l'ordre du fichi
 ```yaml
 num_compteur: !secret compteur0
 nom_moi: "Mon compteur"
-nom_v1: !secret nomcompteur1     # compatibilité paquet ntfy (voisins 1 à 4)
-...
 mdi_url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/..."
 ```
 
 - `${num_compteur}` : numéro de ton compteur, lu dans `secrets.yaml`. ESPHome le remplace partout dans le fichier : `meter_id` de `wmbus_meter`, reconnaissance de ton compteur dans `on_frame`, numéro affiché à l'écran.
-- `${nom_v1}`… `${nom_v4}` : gardés seulement pour le paquet ntfy actuel, qui envoie les bilans des voisins 1 à 4. Les voisins eux-mêmes sont déclarés dans `packages:` (voir [Voisins](#voisins--de-0-à-10)).
+- `fuseau`, `bouton_pin` : fuseau de l'heure Internet et broche du bouton de la carte.
+- Les voisins ne sont plus des substitutions : ils sont déclarés dans `packages:` (voir [Voisins](#voisins--de-0-à-10)).
 - `nom_moi` : nom donné à ton propre compteur dans l'événement CSV.
 - `mdi_url` : police d'icônes Material Design, **figée en version 7.4.47** pour que les codes des icônes (`\U000F058C`…) ne changent pas lors d'une mise à jour.
 
@@ -401,7 +400,7 @@ packages:
 
 **Aucun voisin** : supprime toutes les lignes `voisinN` et remplace `packages:` par `packages: {}`.
 
-> Paquet ntfy : sa version actuelle envoie les bilans des voisins **1 à 4** et lit `nom_v1`… `nom_v4` dans `substitutions`. Garde ces 4 voisins (et ces substitutions) tant que tu l'utilises ; le passage du paquet aux voisins dynamiques est suivi dans [Esphome-Compteur-wmbus-ntfy#5](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy/issues/5).
+> Paquet ntfy : chaque voisin y a aussi sa ligne (`ntfy-voisin.yaml`, même `i`), avec son sujet. Il reçoit son bilan et les alertes de son compteur. Voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy). Il faut la version du paquet qui gère les voisins dynamiques : les anciennes versions (4 voisins fixes, `id: ntfy_time`) ne compilent plus avec cette configuration.
 
 ### Dans ESPHome Builder
 
@@ -680,16 +679,22 @@ Exemple avec des numéros fictifs. Pour les compteurs **inconnus**, seuls le num
 Le dépôt compagnon **[Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy)** ajoute des notifications push [ntfy](https://ntfy.sh). L'ESP les envoie **lui-même** en HTTPS : elles ne passent ni par Home Assistant, ni par `notify`, ni par MQTT.
 
 - **Toi** : alertes (fuite confirmée, fuite de nuit, débit anormal, conso élevée, conso pendant une absence, compteur silencieux), fins d'alerte et bilan quotidien. Elles arrivent même si Home Assistant est arrêté.
-- **Chaque voisin** : bilan quotidien de **son** compteur (conso du jour + index) sur **son** sujet ntfy. Il le lit dans l'appli ntfy (Android, iOS, navigateur) ou dans sa propre domotique (Home Assistant, Jeedom, Domoticz, openHAB, Node-RED… : tout ce qui sait lire un flux HTTP JSON, SSE ou WebSocket). Un voisin n'a besoin d'**aucune** installation chez lui.
+- **Chaque voisin** : bilan quotidien de **son** compteur (conso du jour + index) et alertes de **son** compteur (fuite, débit, conso élevée, compteur silencieux) sur **son** sujet ntfy. Il le lit dans l'appli ntfy (Android, iOS, navigateur) ou dans sa propre domotique (Home Assistant, Jeedom, Domoticz, openHAB, Node-RED… : tout ce qui sait lire un flux HTTP JSON, SSE ou WebSocket). Un voisin n'a besoin d'**aucune** installation chez lui.
 
 Mise en place, en résumé :
 
-1. Un sujet aléatoire par personne dans `secrets.yaml` (`ntfy_topic_moi`, `ntfy_topic_v1` … `ntfy_topic_v4`, `""` = rien). Sur ntfy.sh, **le nom du sujet sert de mot de passe**.
-2. Ces sujets ajoutés aux `substitutions` de `compteur-eau-lora.yaml`.
-3. Le paquet ajouté à la configuration, sans rien modifier d'autre :
+1. Un sujet aléatoire par personne dans `secrets.yaml` (`ntfy_topic_moi`, `ntfy_topic_v1`…, `""` = rien). Sur ntfy.sh, **le nom du sujet sert de mot de passe**.
+2. `ntfy_topic_moi: !secret ntfy_topic_moi` ajouté aux `substitutions` de `compteur-eau-lora.yaml`.
+3. Le paquet, puis une ligne par voisin (même `i` que sa ligne `voisins/voisin.yaml`), ajoutés à `packages:` :
    ```yaml
    packages:
      ntfy: github://Mathide-Team/Esphome-Compteur-wmbus-ntfy/ntfy.yaml@main
+     ntfy_voisin1:
+       url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy
+       ref: main
+       files:
+         - path: ntfy-voisin.yaml
+           vars: { i: 1, nom: !secret nomcompteur1, topic: !secret ntfy_topic_v1 }
    ```
 4. Flash, puis bouton **« ntfy - message de test »**.
 

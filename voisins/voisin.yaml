@@ -89,6 +89,10 @@ sensor:
               id(v${i}_day) = now.day_of_year;
             }
             id(v${i}_conso_jour).update();
+            // Dernière trame (horodatage UTC : HA l'affiche « il y a 3 minutes »)
+            char b[32]; time_t t = (time_t) now.timestamp; struct tm tu; gmtime_r(&t, &tu);
+            strftime(b, sizeof(b), "%Y-%m-%dT%H:%M:%S+00:00", &tu);
+            id(v${i}_derniere_trame).publish_state(b);
   - platform: wmbus_meter
     parent_id: compteur_v${i}
     field: rssi_dbm
@@ -110,3 +114,10 @@ sensor:
       if (!now.is_valid() || id(v${i}_day) != now.day_of_year || id(v${i}_total) <= 0 || id(v${i}_day_start) <= 0)
         return 0.0f;
       return (float) ((id(v${i}_total) - id(v${i}_day_start)) * 1000.0);
+
+text_sensor:
+  - platform: template
+    id: v${i}_derniere_trame
+    name: "${nom} - Dernière trame"
+    device_class: timestamp
+    entity_category: diagnostic

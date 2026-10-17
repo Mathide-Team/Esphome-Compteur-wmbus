@@ -147,6 +147,22 @@ globals:
     type: int
     restore_value: yes
     initial_value: '-1'
+  - id: g_week_start     # 1er index de la semaine (lundi) et semaine correspondante
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: g_week           # n° de jour du lundi de la semaine (jours depuis le 1/1/1970)
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+  - id: g_month_start    # 1er index du mois et mois correspondant (année × 12 + mois)
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: g_month
+    type: int
+    restore_value: yes
+    initial_value: '-1'
   - id: g_leak_hours     # heures consécutives avec conso
     type: int
     restore_value: yes
@@ -366,6 +382,28 @@ sensor:
             ESP_LOGD("conso", "Conso du jour : %.0f L (index %.3f - 1er index %.3f)",
                      (total - id(g_day_start)) * 1000.0, total, id(g_day_start));
             id(conso_jour_l).update();
+            // Semaine (du lundi) et mois : même principe que le jour (1er index reçu de la période)
+            auto jours = [](int a, int m, int j) -> int {   // jours depuis le 1/1/1970, date locale
+              a -= m <= 2;
+              int ere = (a >= 0 ? a : a - 399) / 400;
+              int ae = a - ere * 400;
+              int jda = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + j - 1;
+              return ere * 146097 + ae * 365 + ae / 4 - ae / 100 + jda - 719468;
+            };
+            int lundi = jours(now.year, now.month, now.day_of_month) - (now.day_of_week + 5) % 7;
+            if (id(g_week) != lundi || id(g_week_start) <= 0 || total < id(g_week_start)) {
+              id(g_week_start) = total; id(g_week) = lundi;
+            }
+            int mois = now.year * 12 + now.month;
+            if (id(g_month) != mois || id(g_month_start) <= 0 || total < id(g_month_start)) {
+              id(g_month_start) = total; id(g_month) = mois;
+            }
+            // Dernière trame (horodatage UTC : HA l'affiche « il y a 3 minutes »)
+            {
+              char b[32]; time_t t = (time_t) ts; struct tm tu; gmtime_r(&t, &tu);
+              strftime(b, sizeof(b), "%Y-%m-%dT%H:%M:%S+00:00", &tu);
+              id(derniere_trame).publish_state(b);
+            }
             if (id(g_flow_ts) == 0 || total < id(g_flow_total)) {
               id(g_flow_total) = total; id(g_flow_ts) = ts; return;
             }
@@ -428,9 +466,66 @@ sensor:
         return 0.0f;
       return (float) ((id(g_total) - id(g_day_start)) * 1000.0);
 
+  # ── Prix de l'eau, semaine et mois (sans configuration.yaml ni compteur de services publics) ──
+  - platform: template
+    id: prix_eau_m3
+    name: "Prix de l'eau"
+    unit_of_measurement: "EUR/m³"   # entité de prix acceptée par le tableau de bord Énergie
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: 'return id(prix_m3).state;'
+  - platform: template
+    id: conso_semaine_l
+    name: "Conso semaine"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(g_week) < 0 || id(g_total) <= 0 || id(g_week_start) <= 0) return 0.0f;
+      return (float) ((id(g_total) - id(g_week_start)) * 1000.0);
+  - platform: template
+    id: conso_mois_l
+    name: "Conso mois"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(g_month) != now.year * 12 + now.month || id(g_total) <= 0 || id(g_month_start) <= 0)
+        return 0.0f;
+      return (float) ((id(g_total) - id(g_month_start)) * 1000.0);
+  - platform: template
+    id: cout_jour
+    name: "Coût aujourd'hui"
+    device_class: monetary
+    unit_of_measurement: "€"
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      if (!id(conso_jour_l).has_state()) return 0.0f;
+      return id(conso_jour_l).state / 1000.0f * id(prix_m3).state;
+  - platform: template
+    id: cout_mois
+    name: "Coût mois"
+    device_class: monetary
+    unit_of_measurement: "€"
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      if (!id(conso_mois_l).has_state()) return 0.0f;
+      return id(conso_mois_l).state / 1000.0f * id(prix_m3).state;
+
   # Voisins : index, RSSI et conso du jour déclarés par voisins/voisin.yaml
 
 text_sensor:
+  - platform: template
+    id: derniere_trame
+    name: "Compteur eau - Dernière trame"
+    device_class: timestamp
+    entity_category: diagnostic
   - platform: wmbus_meter
     parent_id: mon_compteur
     field: status
@@ -438,6 +533,20 @@ text_sensor:
     entity_category: diagnostic
 
 number:
+  # Prix de l'eau au m³, abonnement non compris (eau + assainissement + redevances, TTC).
+  # Ex. Grand Besançon 2026, tranche 3,1 à 100 m³ : environ 3,84 €/m³. Voir README, « Prix de l'eau ».
+  - platform: template
+    id: prix_m3
+    name: "Prix de l'eau au m³"
+    optimistic: true
+    restore_value: true
+    initial_value: 4.0
+    min_value: 0
+    max_value: 20
+    step: 0.01
+    mode: box
+    unit_of_measurement: "€/m³"
+    entity_category: config
   - platform: template
     id: seuil_fuite_l
     name: "Fuite - conso min par heure"

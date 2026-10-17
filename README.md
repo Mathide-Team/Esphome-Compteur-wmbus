@@ -202,9 +202,13 @@ on_boot:
 - `wifi` + `ap` : connexion à ta box. Si elle échoue, le module crée son propre point d'accès (`fallback_hotspot_ssid`).
 - `captive_portal` : sur ce point d'accès de secours, une page web permet de saisir un autre WiFi.
 
-### `time` : l'heure de Home Assistant et les tâches planifiées
+### `time` : l'heure (HA ou Internet) et les tâches planifiées
 
-L'heure vient de HA (`platform: homeassistant`). Deux tâches tournent à heure fixe :
+Deux sources règlent la **même horloge** de l'ESP : Home Assistant (`platform: homeassistant`, id `ha_time`) et l'heure Internet (`platform: sntp`, fuseau `${fuseau}`, `Europe/Paris` par défaut). Dès que l'une des deux a répondu, `id(ha_time).now()` est valide. **Si HA est arrêté**, la conso du jour, la bascule de minuit et l'extinction nocturne de l'écran continuent avec l'heure Internet (il faut seulement le WiFi).
+
+Le SNTP n'a pas d'`id` : si le paquet ntfy déclare aussi une source SNTP, ESPHome fusionne les deux en une seule. Il faut pour cela une version du paquet ntfy dont la source SNTP n'a pas d'`id` non plus (voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy)).
+
+Deux tâches tournent à heure fixe :
 
 **Chaque heure pile** (`minutes: 0, seconds: 0`) :
 1. Conso de l'heure = (index actuel − index au début de l'heure) × 1000 → capteur « Conso dernière heure ».
@@ -226,6 +230,8 @@ L'heure vient de HA (`platform: homeassistant`). Deux tâches tournent à heure 
 | `g_day_start`, `g_day` | 1er index du jour et jour de l'année correspondant | oui |
 | `g_leak_hours`, `g_night_flag` | Heures de conso consécutives, drapeau de fuite de nuit | oui |
 | `g_page` | Page affichée sur l'OLED (0, 1 ou 2) | non |
+| `g_ecran_eteint`, `g_reveil_ms`, `g_pause_ms` | Écran éteint la nuit, réveil par le bouton (60 s), pause de la rotation après un appui (30 s) | non |
+| `g_week_start`, `g_week`, `g_month_start`, `g_month` | 1er index de la semaine (lundi) et du mois, et période correspondante | oui |
 | `vN_total`, `vN_day_start`, `vN_day` | Pareil pour chaque voisin N (index, 1er index du jour, jour), créées par `voisins/voisin.yaml` | oui (sauf `vN_total`) |
 | `g_voisins`, `g_v_infos` | Tables remplies au démarrage par chaque voisin : numéro de compteur → voisin N, et voisin N → nom, index, conso du jour (export CSV) | non |
 | `g_id_off` | Position du numéro de compteur dans l'en-tête des trames (4 ou 6), apprise automatiquement | oui |
@@ -455,6 +461,8 @@ Les secrets restent dans ton `secrets.yaml` : seules les variables locales leur 
 | Heures de conso continue | Nombre d'heures consécutives avec consommation |
 | Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière | Seuils réglables depuis HA |
 | Mode absence | Interrupteur |
+| Écran - extinction nocturne, Écran - extinction à, Écran - rallumage à | Interrupteur et heures (0 à 23) de l'extinction de l'OLED, 22 h → 7 h par défaut |
+| Bouton de la carte | État du bouton PRG (diagnostic) |
 | 6 capteurs « problème » | Voir [Alertes](#détection-de-fuite-et-alertes) |
 
 **Chaque voisin déclaré** (nom = `nomcompteurN`) : `Nom - Index` (m³), `Nom - Conso aujourd'hui` (L), `Nom - RSSI` et `Nom - Dernière trame` (diagnostic).
@@ -483,6 +491,18 @@ Simulation des pages : index et conso du jour, signaux WiFi et radio, alertes (2
 1. **Index** (police réduite à partir de 1000 m³), **conso du jour** et numéro du compteur.
 2. **Signaux** WiFi et wM-Bus : barres (4 niveaux) et dBm. Seuils WiFi : -55 / -67 / -75 / -85 dBm. Seuils radio : -60 / -75 / -90 / -100 dBm.
 3. **Alertes actives** (jusqu'à 4 lignes, puis « +N autres »). Cette page est sautée s'il n'y a aucune alerte.
+
+### Extinction la nuit et bouton
+
+**Extinction la nuit** : l'écran s'éteint de **22 h à 7 h** par défaut, pour ménager l'OLED. Règle les heures dans le tableau de bord (carte Actions → Écran de la carte) ou sur la page de l'appareil :
+- « Écran - extinction à » (début, inclus) et « Écran - rallumage à » (fin, exclue). La plage peut passer minuit (22 → 7) ou non (13 → 14). Si les deux heures sont égales, l'écran ne s'éteint jamais ;
+- « Écran - extinction nocturne » : coupe la fonction (écran toujours allumé).
+
+Si l'ESP ne connaît pas l'heure (ni HA ni Internet), l'écran reste allumé.
+
+**Bouton PRG** (GPIO0, substitution `bouton_pin`) :
+- appui le jour : page suivante, et rotation automatique suspendue 30 s pour lire la page ;
+- appui la nuit : rallume l'écran 60 s, sur la page en cours.
 
 ## Détection de fuite et alertes
 

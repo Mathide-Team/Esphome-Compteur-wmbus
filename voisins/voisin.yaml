@@ -1,0 +1,112 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  voisins/voisin.yaml : modèle d'UN compteur voisin (paquet ESPHome avec variables)
+#
+#  À inclure une fois par voisin dans compteur-eau-lora.yaml (de 0 à 10 voisins) :
+#
+#    packages:
+#      voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }
+#
+#  Variables :
+#    i     numéro du voisin, de 1 à 10, unique (sert aux identifiants : v1_total, compteur_v1…)
+#    num   numéro du compteur, chaîne "0x12345678" (chiffres imprimés sur le compteur)
+#    nom   nom affiché dans Home Assistant (« Dupont - Index »…)
+#    type  facultatif : pilote wmbus_meter (dme_07 par défaut, izar pour un compteur Izar…)
+#
+#  Ce fichier ne contient aucun secret : il peut aussi être chargé directement depuis GitHub
+#  (voir README, « Voisins »).
+# ══════════════════════════════════════════════════════════════════════════════
+
+substitutions:
+  type: dme_07          # valeur par défaut, remplacée par vars: { type: … }
+
+# Inscription du voisin dans les tables de compteur-eau-lora.yaml (export CSV, compteurs connus).
+# Priorité 600 : après la création des globals, avant la réception des premières trames.
+esphome:
+  on_boot:
+    - priority: 600
+      then:
+        - lambda: |-
+            uint32_t numero = (uint32_t) strtoul("${num}", nullptr, 16);
+            id(g_voisins)[numero] = ${i};
+            id(g_v_infos)[${i}] = [](std::string &nom, double &total, double &conso) {
+              nom = "${nom}";
+              total = id(v${i}_total);
+              auto now = id(ha_time).now();
+              conso = (!now.is_valid() || id(v${i}_day) != now.day_of_year || id(v${i}_total) <= 0 || id(v${i}_day_start) <= 0)
+                        ? 0.0 : (id(v${i}_total) - id(v${i}_day_start)) * 1000.0;
+            };
+            ESP_LOGI("voisin", "Voisin ${i} (${nom}) : compteur %08X", (unsigned int) numero);
+
+globals:
+  - id: v${i}_total         # dernier index reçu (m³)
+    type: double
+    initial_value: '0'
+  - id: v${i}_day_start     # 1er index reçu dans la journée
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: v${i}_day           # jour de l'année auquel correspond v${i}_day_start
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+
+wmbus_meter:
+  - id: compteur_v${i}
+    meter_id: ${num}
+    type: ${type}
+    mode: [T1]
+
+# Minuit : la conso du jour repart à 0 tout de suite (sans attendre la mise à jour de 60 s)
+time:
+  - id: !extend ha_time
+    on_time:
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        then:
+          - component.update: v${i}_conso_jour
+
+sensor:
+  - platform: wmbus_meter
+    parent_id: compteur_v${i}
+    field: total_m3
+    id: v${i}_index
+    name: "${nom} - Index"
+    device_class: water
+    state_class: total_increasing
+    unit_of_measurement: "m³"   # écrit en dur : le composant publie « m3 », refusé par le tableau de bord Énergie
+    accuracy_decimals: 3
+    on_value:
+      then:
+        - lambda: |-
+            double total = x;
+            id(v${i}_total) = total;   // mémorisé même si l'heure n'est pas encore connue
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) return;
+            // 1er index du jour : 1re trame reçue aujourd'hui (ou index revenu en arrière = compteur remplacé)
+            if (id(v${i}_day) != now.day_of_year || id(v${i}_day_start) <= 0 || total < id(v${i}_day_start)) {
+              id(v${i}_day_start) = total;
+              id(v${i}_day) = now.day_of_year;
+            }
+            id(v${i}_conso_jour).update();
+  - platform: wmbus_meter
+    parent_id: compteur_v${i}
+    field: rssi_dbm
+    id: v${i}_rssi
+    name: "${nom} - RSSI"
+    device_class: signal_strength
+    unit_of_measurement: "dBm"  # le composant publie « dbm »
+    state_class: measurement
+    entity_category: diagnostic
+  - platform: template
+    id: v${i}_conso_jour
+    name: "${nom} - Conso aujourd'hui"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(v${i}_day) != now.day_of_year || id(v${i}_total) <= 0 || id(v${i}_day_start) <= 0)
+        return 0.0f;
+      return (float) ((id(v${i}_total) - id(v${i}_day_start)) * 1000.0);

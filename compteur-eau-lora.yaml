@@ -5,8 +5,11 @@
 #  secrets.yaml requis :
 #    wifi_ssid, wifi_password, fallback_hotspot_ssid, fallback_hotspot_password,
 #    ota_password,
-#    compteur0 … compteur4   (chaînes entre guillemets, ex. "0x12345678"),
-#    nomcompteur1 … nomcompteur4
+#    compteur0               (ton compteur, chaîne entre guillemets, ex. "0x12345678"),
+#    compteur1 … compteurN et nomcompteur1 … nomcompteurN pour les voisins déclarés
+#
+#  Voisins : de 0 à 10, une ligne chacun dans « packages: » (fin de la section suivante),
+#  modèle voisins/voisin.yaml. Voir README, « Voisins ».
 #
 #  Export CSV : l'ESP n'écrit aucun fichier. Il envoie un évènement
 #  « esphome.wmbus_trame » à Home Assistant pour chaque compteur entendu (connu
@@ -18,28 +21,37 @@ substitutions:
   # Sert au récepteur wM-Bus et à l'écran 1 (affiché sans le « 0x »)
   num_compteur: !secret compteur0
   nom_moi: "Mon compteur"   # nom écrit dans le CSV pour ton propre compteur
-  # Voisins (secrets compteur1..4 et nomcompteur1..4)
-  num_v1: !secret compteur1
+  # Compatibilité avec le paquet ntfy actuel (bilans des voisins 1 à 4, qui lit ${nom_v1}…) :
+  # à garder tant que tu utilises ce paquet dans sa version à 4 voisins fixes.
   nom_v1: !secret nomcompteur1
-  num_v2: !secret compteur2
   nom_v2: !secret nomcompteur2
-  num_v3: !secret compteur3
   nom_v3: !secret nomcompteur3
-  num_v4: !secret compteur4
   nom_v4: !secret nomcompteur4
   # Police des pictogrammes (Material Design Icons, version figée)
   mdi_url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
+
+# ── Voisins : une ligne par voisin (0 à 10), i = 1 à 10 sans doublon ──
+# Ajouter un voisin : compteurN et nomcompteurN dans secrets.yaml, puis une ligne ici.
+# Retirer un voisin : supprimer sa ligne (ses secrets peuvent rester).
+# Autre modèle de compteur : ajouter « type: izar » (par ex.) dans vars.
+# ESPHome Builder, ou modèle chargé depuis GitHub sans copier de fichier : voir README, « Voisins ».
+packages:
+  voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }
+  voisin2: !include { file: voisins/voisin.yaml, vars: { i: 2, num: !secret compteur2, nom: !secret nomcompteur2 } }
+  voisin3: !include { file: voisins/voisin.yaml, vars: { i: 3, num: !secret compteur3, nom: !secret nomcompteur3 } }
+  voisin4: !include { file: voisins/voisin.yaml, vars: { i: 4, num: !secret compteur4, nom: !secret nomcompteur4 } }
 
 esphome:
   name: compteur-eau-lora
   friendly_name: Compteur Eau LoRa
   # Vext doit être allumé APRÈS le setup() de la sortie GPIO (priorité 800, qui la remet à l'arrêt)
   # et AVANT l'init de l'OLED (priorité 400) : d'où 799. À 800, l'OLED restait éteint (écran noir).
+  # Liste (et non bloc unique) : chaque voisin y ajoute sa propre inscription (voisins/voisin.yaml).
   on_boot:
-    priority: 799
-    then:
-      - output.turn_on: vext_enable
-      - lambda: delay(50);   // laisse l'alimentation de l'OLED se stabiliser avant son init
+    - priority: 799
+      then:
+        - output.turn_on: vext_enable
+        - lambda: delay(50);   // laisse l'alimentation de l'OLED se stabiliser avant son init
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -107,10 +119,7 @@ time:
               if (id(g_day) == veille && id(g_total) > 0 && id(g_day_start) > 0)
                 id(conso_hier_l).publish_state((id(g_total) - id(g_day_start)) * 1000.0);
               id(conso_jour_l).update();
-              id(v1_conso_jour).update();
-              id(v2_conso_jour).update();
-              id(v3_conso_jour).update();
-              id(v4_conso_jour).update();
+              // (chaque voisin met à jour sa propre conso du jour : voisins/voisin.yaml)
 
 
 globals:
@@ -150,57 +159,11 @@ globals:
     type: int
     initial_value: '0'
 
-  # ── Voisin 1 ──
-  - id: v1_total         # dernier index reçu (m³)
-    type: double
-    initial_value: '0'
-  - id: v1_day_start     # 1er index reçu dans la journée
-    type: double
-    restore_value: yes
-    initial_value: '0'
-  - id: v1_day           # jour de l'année auquel correspond v1_day_start
-    type: int
-    restore_value: yes
-    initial_value: '-1'
-
-  # ── Voisin 2 ──
-  - id: v2_total
-    type: double
-    initial_value: '0'
-  - id: v2_day_start
-    type: double
-    restore_value: yes
-    initial_value: '0'
-  - id: v2_day
-    type: int
-    restore_value: yes
-    initial_value: '-1'
-
-  # ── Voisin 3 ──
-  - id: v3_total
-    type: double
-    initial_value: '0'
-  - id: v3_day_start
-    type: double
-    restore_value: yes
-    initial_value: '0'
-  - id: v3_day
-    type: int
-    restore_value: yes
-    initial_value: '-1'
-
-  # ── Voisin 4 ──
-  - id: v4_total
-    type: double
-    initial_value: '0'
-  - id: v4_day_start
-    type: double
-    restore_value: yes
-    initial_value: '0'
-  - id: v4_day
-    type: int
-    restore_value: yes
-    initial_value: '-1'
+  # ── Voisins (tables remplies au démarrage par chaque voisins/voisin.yaml) ──
+  - id: g_voisins        # n° de compteur → numéro du voisin (1 à 10)
+    type: std::map<uint32_t, int>
+  - id: g_v_infos        # numéro du voisin → nom, index (m³) et conso du jour (L)
+    type: std::map<int, std::function<void(std::string &, double &, double &)>>
 
   # ── Export CSV ──
   - id: g_id_off         # emplacement du n° de compteur dans l'en-tête des trames (4 ou 6), appris tout seul
@@ -282,22 +245,20 @@ wmbus_radio:
             uint32_t id_a = (uint32_t) d[4] | ((uint32_t) d[5] << 8) | ((uint32_t) d[6] << 16) | ((uint32_t) d[7] << 24);
             uint32_t id_b = (uint32_t) d[6] | ((uint32_t) d[7] << 8) | ((uint32_t) d[8] << 16) | ((uint32_t) d[9] << 24);
 
-            // 3) Compteur connu ? (le tien = case 0, voisins = cases 1 à 4). Un compteur connu qui
-            //    retombe sur l'un des deux emplacements fixe celui à utiliser pour les inconnus.
-            const uint32_t connus[5] = {
-              (uint32_t) strtoul("${num_compteur}", nullptr, 16),
-              (uint32_t) strtoul("${num_v1}", nullptr, 16),
-              (uint32_t) strtoul("${num_v2}", nullptr, 16),
-              (uint32_t) strtoul("${num_v3}", nullptr, 16),
-              (uint32_t) strtoul("${num_v4}", nullptr, 16)
+            // 3) Compteur connu ? (le tien = case 0, voisins = 1 à 10, table g_voisins). Un compteur
+            //    connu qui retombe sur l'un des deux emplacements fixe celui à utiliser pour les inconnus.
+            const uint32_t mien = (uint32_t) strtoul("${num_compteur}", nullptr, 16);
+            auto &voisins = id(g_voisins);
+            auto slot_de = [&](uint32_t n) -> int {
+              if (n == mien) return 0;
+              auto v = voisins.find(n);
+              return v != voisins.end() ? v->second : -1;
             };
-            int slot = -1;
+            int slot = slot_de(id_a);
             uint32_t idn = 0;
-            for (int i = 0; i < 5 && slot < 0; i++) {
-              if (connus[i] == id_a) { slot = i; idn = id_a; id(g_id_off) = 4; }
-              else if (connus[i] == id_b) { slot = i; idn = id_b; id(g_id_off) = 6; }
-            }
-            if (slot < 0) idn = (id(g_id_off) == 6) ? id_b : id_a;
+            if (slot >= 0) { idn = id_a; id(g_id_off) = 4; }
+            else if ((slot = slot_de(id_b)) >= 0) { idn = id_b; id(g_id_off) = 6; }
+            else idn = (id(g_id_off) == 6) ? id_b : id_a;
 
             // 4) Une ligne au maximum par compteur et par intervalle (nombre « Export CSV - intervalle »)
             uint32_t maintenant = millis() / 1000;
@@ -317,29 +278,12 @@ wmbus_radio:
                      d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9]);
             id(envoi_trame).execute(std::string(buf), rssi, slot);
 
-# Ton compteur (compteur0) puis les quatre voisins. Si un voisin a un autre modèle de compteur,
-# change son « type ».
+# Ton compteur (compteur0). Les voisins sont déclarés par voisins/voisin.yaml (« packages: »).
 # NB : meter_id doit être un nombre précis (pas de joker) : ESPHome ne peut donc décoder l'index
-# QUE des compteurs déclarés ici. Les autres compteurs ne remontent que leur n° et leur RSSI.
+# QUE des compteurs déclarés. Les autres compteurs ne remontent que leur n° et leur RSSI.
 wmbus_meter:
   - id: mon_compteur
     meter_id: ${num_compteur}
-    type: dme_07
-    mode: [T1]
-  - id: compteur_v1
-    meter_id: ${num_v1}
-    type: dme_07
-    mode: [T1]
-  - id: compteur_v2
-    meter_id: ${num_v2}
-    type: dme_07
-    mode: [T1]
-  - id: compteur_v3
-    meter_id: ${num_v3}
-    type: dme_07
-    mode: [T1]
-  - id: compteur_v4
-    meter_id: ${num_v4}
     type: dme_07
     mode: [T1]
 
@@ -350,7 +294,7 @@ script:
     parameters:
       p_id: string      # n° de compteur (8 chiffres hexadécimaux)
       p_rssi: int       # RSSI de la trame (dBm)
-      p_slot: int       # -1 = inconnu, 0 = mon compteur, 1 à 4 = voisins
+      p_slot: int       # -1 = inconnu, 0 = mon compteur, 1 à 10 = voisins
     then:
       - delay: 2s       # laisse wmbus_meter décoder la trame et mettre l'index à jour
       - lambda: |-
@@ -360,15 +304,13 @@ script:
             if (!now.is_valid() || jour != now.day_of_year || total <= 0 || debut <= 0) return 0.0;
             return (total - debut) * 1000.0;
           };
-          const char *nom = "";
+          std::string nom;
           double total = 0, conso = 0;
-          switch (p_slot) {
-            case 0: nom = "${nom_moi}"; total = id(g_total);  conso = conso_l(id(g_day),  id(g_total),  id(g_day_start));  break;
-            case 1: nom = "${nom_v1}";  total = id(v1_total); conso = conso_l(id(v1_day), id(v1_total), id(v1_day_start)); break;
-            case 2: nom = "${nom_v2}";  total = id(v2_total); conso = conso_l(id(v2_day), id(v2_total), id(v2_day_start)); break;
-            case 3: nom = "${nom_v3}";  total = id(v3_total); conso = conso_l(id(v3_day), id(v3_total), id(v3_day_start)); break;
-            case 4: nom = "${nom_v4}";  total = id(v4_total); conso = conso_l(id(v4_day), id(v4_total), id(v4_day_start)); break;
-            default: break;
+          if (p_slot == 0) {
+            nom = "${nom_moi}"; total = id(g_total); conso = conso_l(id(g_day), id(g_total), id(g_day_start));
+          } else if (p_slot > 0) {
+            auto v = id(g_v_infos).find(p_slot);   // voisin : nom, index et conso fournis par voisins/voisin.yaml
+            if (v != id(g_v_infos).end()) v->second(nom, total, conso);
           }
           id(g_ev_nom) = nom;
           if (p_slot >= 0) {
@@ -486,182 +428,7 @@ sensor:
         return 0.0f;
       return (float) ((id(g_total) - id(g_day_start)) * 1000.0);
 
-  # ── Voisin 1 : index + RSSI + conso du jour (visibles dans Home Assistant) ──
-  - platform: wmbus_meter
-    parent_id: compteur_v1
-    field: total_m3
-    id: v1_index
-    name: "${nom_v1} - Index"
-    device_class: water
-    state_class: total_increasing
-    unit_of_measurement: "m³"   # écrit en dur : le composant publie « m3 », refusé par le tableau de bord Énergie
-    accuracy_decimals: 3
-    on_value:
-      then:
-        - lambda: |-
-            double total = x;
-            id(v1_total) = total;   // mémorisé même si l'heure n'est pas encore connue
-            auto now = id(ha_time).now();
-            if (!now.is_valid()) return;
-            // 1er index du jour : 1re trame reçue aujourd'hui
-            if (id(v1_day) != now.day_of_year || id(v1_day_start) <= 0 || total < id(v1_day_start)) {
-              id(v1_day_start) = total;
-              id(v1_day) = now.day_of_year;
-            }
-            id(v1_conso_jour).update();
-  - platform: wmbus_meter
-    parent_id: compteur_v1
-    field: rssi_dbm
-    id: v1_rssi
-    name: "${nom_v1} - RSSI"
-    device_class: signal_strength
-    unit_of_measurement: "dBm"  # le composant publie « dbm »
-    state_class: measurement
-    entity_category: diagnostic
-  - platform: template
-    id: v1_conso_jour
-    name: "${nom_v1} - Conso aujourd'hui"
-    unit_of_measurement: "L"
-    accuracy_decimals: 0
-    state_class: measurement
-    update_interval: 60s
-    lambda: |-
-      auto now = id(ha_time).now();
-      if (!now.is_valid() || id(v1_day) != now.day_of_year || id(v1_total) <= 0 || id(v1_day_start) <= 0)
-        return 0.0f;
-      return (float) ((id(v1_total) - id(v1_day_start)) * 1000.0);
-
-  # ── Voisin 2 : index + RSSI + conso du jour (visibles dans Home Assistant) ──
-  - platform: wmbus_meter
-    parent_id: compteur_v2
-    field: total_m3
-    id: v2_index
-    name: "${nom_v2} - Index"
-    device_class: water
-    state_class: total_increasing
-    unit_of_measurement: "m³"   # écrit en dur : le composant publie « m3 », refusé par le tableau de bord Énergie
-    accuracy_decimals: 3
-    on_value:
-      then:
-        - lambda: |-
-            double total = x;
-            id(v2_total) = total;   // mémorisé même si l'heure n'est pas encore connue
-            auto now = id(ha_time).now();
-            if (!now.is_valid()) return;
-            if (id(v2_day) != now.day_of_year || id(v2_day_start) <= 0 || total < id(v2_day_start)) {
-              id(v2_day_start) = total;
-              id(v2_day) = now.day_of_year;
-            }
-            id(v2_conso_jour).update();
-  - platform: wmbus_meter
-    parent_id: compteur_v2
-    field: rssi_dbm
-    id: v2_rssi
-    name: "${nom_v2} - RSSI"
-    device_class: signal_strength
-    unit_of_measurement: "dBm"  # le composant publie « dbm »
-    state_class: measurement
-    entity_category: diagnostic
-  - platform: template
-    id: v2_conso_jour
-    name: "${nom_v2} - Conso aujourd'hui"
-    unit_of_measurement: "L"
-    accuracy_decimals: 0
-    state_class: measurement
-    update_interval: 60s
-    lambda: |-
-      auto now = id(ha_time).now();
-      if (!now.is_valid() || id(v2_day) != now.day_of_year || id(v2_total) <= 0 || id(v2_day_start) <= 0)
-        return 0.0f;
-      return (float) ((id(v2_total) - id(v2_day_start)) * 1000.0);
-
-  # ── Voisin 3 : index + RSSI + conso du jour (visibles dans Home Assistant) ──
-  - platform: wmbus_meter
-    parent_id: compteur_v3
-    field: total_m3
-    id: v3_index
-    name: "${nom_v3} - Index"
-    device_class: water
-    state_class: total_increasing
-    unit_of_measurement: "m³"   # écrit en dur : le composant publie « m3 », refusé par le tableau de bord Énergie
-    accuracy_decimals: 3
-    on_value:
-      then:
-        - lambda: |-
-            double total = x;
-            id(v3_total) = total;   // mémorisé même si l'heure n'est pas encore connue
-            auto now = id(ha_time).now();
-            if (!now.is_valid()) return;
-            if (id(v3_day) != now.day_of_year || id(v3_day_start) <= 0 || total < id(v3_day_start)) {
-              id(v3_day_start) = total;
-              id(v3_day) = now.day_of_year;
-            }
-            id(v3_conso_jour).update();
-  - platform: wmbus_meter
-    parent_id: compteur_v3
-    field: rssi_dbm
-    id: v3_rssi
-    name: "${nom_v3} - RSSI"
-    device_class: signal_strength
-    unit_of_measurement: "dBm"  # le composant publie « dbm »
-    state_class: measurement
-    entity_category: diagnostic
-  - platform: template
-    id: v3_conso_jour
-    name: "${nom_v3} - Conso aujourd'hui"
-    unit_of_measurement: "L"
-    accuracy_decimals: 0
-    state_class: measurement
-    update_interval: 60s
-    lambda: |-
-      auto now = id(ha_time).now();
-      if (!now.is_valid() || id(v3_day) != now.day_of_year || id(v3_total) <= 0 || id(v3_day_start) <= 0)
-        return 0.0f;
-      return (float) ((id(v3_total) - id(v3_day_start)) * 1000.0);
-
-  # ── Voisin 4 : index + RSSI + conso du jour (visibles dans Home Assistant) ──
-  - platform: wmbus_meter
-    parent_id: compteur_v4
-    field: total_m3
-    id: v4_index
-    name: "${nom_v4} - Index"
-    device_class: water
-    state_class: total_increasing
-    unit_of_measurement: "m³"   # écrit en dur : le composant publie « m3 », refusé par le tableau de bord Énergie
-    accuracy_decimals: 3
-    on_value:
-      then:
-        - lambda: |-
-            double total = x;
-            id(v4_total) = total;   // mémorisé même si l'heure n'est pas encore connue
-            auto now = id(ha_time).now();
-            if (!now.is_valid()) return;
-            if (id(v4_day) != now.day_of_year || id(v4_day_start) <= 0 || total < id(v4_day_start)) {
-              id(v4_day_start) = total;
-              id(v4_day) = now.day_of_year;
-            }
-            id(v4_conso_jour).update();
-  - platform: wmbus_meter
-    parent_id: compteur_v4
-    field: rssi_dbm
-    id: v4_rssi
-    name: "${nom_v4} - RSSI"
-    device_class: signal_strength
-    unit_of_measurement: "dBm"  # le composant publie « dbm »
-    state_class: measurement
-    entity_category: diagnostic
-  - platform: template
-    id: v4_conso_jour
-    name: "${nom_v4} - Conso aujourd'hui"
-    unit_of_measurement: "L"
-    accuracy_decimals: 0
-    state_class: measurement
-    update_interval: 60s
-    lambda: |-
-      auto now = id(ha_time).now();
-      if (!now.is_valid() || id(v4_day) != now.day_of_year || id(v4_total) <= 0 || id(v4_day_start) <= 0)
-        return 0.0f;
-      return (float) ((id(v4_total) - id(v4_day_start)) * 1000.0);
+  # Voisins : index, RSSI et conso du jour déclarés par voisins/voisin.yaml
 
 text_sensor:
   - platform: wmbus_meter

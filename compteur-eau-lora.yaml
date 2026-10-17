@@ -401,6 +401,7 @@ sensor:
     name: "Compteur eau - Volume total"
     device_class: water
     state_class: total_increasing
+    unit_of_measurement: "m³"   # écrit en dur : le composant publie « m3 », refusé par le tableau de bord Énergie
     accuracy_decimals: 3
     on_value:
       then:
@@ -432,6 +433,7 @@ sensor:
     id: eau_rssi
     name: "Compteur eau - RSSI"
     device_class: signal_strength
+    unit_of_measurement: "dBm"  # le composant publie « dbm »
     state_class: measurement
     entity_category: diagnostic
 
@@ -486,6 +488,7 @@ sensor:
     name: "${nom_v1} - Index"
     device_class: water
     state_class: total_increasing
+    unit_of_measurement: "m³"   # écrit en dur : le composant publie « m3 », refusé par le tableau de bord Énergie
     accuracy_decimals: 3
     on_value:
       then:
@@ -506,6 +509,7 @@ sensor:
     id: v1_rssi
     name: "${nom_v1} - RSSI"
     device_class: signal_strength
+    unit_of_measurement: "dBm"  # le composant publie « dbm »
     state_class: measurement
     entity_category: diagnostic
   - platform: template
@@ -529,6 +533,7 @@ sensor:
     name: "${nom_v2} - Index"
     device_class: water
     state_class: total_increasing
+    unit_of_measurement: "m³"   # écrit en dur : le composant publie « m3 », refusé par le tableau de bord Énergie
     accuracy_decimals: 3
     on_value:
       then:
@@ -548,6 +553,7 @@ sensor:
     id: v2_rssi
     name: "${nom_v2} - RSSI"
     device_class: signal_strength
+    unit_of_measurement: "dBm"  # le composant publie « dbm »
     state_class: measurement
     entity_category: diagnostic
   - platform: template
@@ -571,6 +577,7 @@ sensor:
     name: "${nom_v3} - Index"
     device_class: water
     state_class: total_increasing
+    unit_of_measurement: "m³"   # écrit en dur : le composant publie « m3 », refusé par le tableau de bord Énergie
     accuracy_decimals: 3
     on_value:
       then:
@@ -590,6 +597,7 @@ sensor:
     id: v3_rssi
     name: "${nom_v3} - RSSI"
     device_class: signal_strength
+    unit_of_measurement: "dBm"  # le composant publie « dbm »
     state_class: measurement
     entity_category: diagnostic
   - platform: template
@@ -613,6 +621,7 @@ sensor:
     name: "${nom_v4} - Index"
     device_class: water
     state_class: total_increasing
+    unit_of_measurement: "m³"   # écrit en dur : le composant publie « m3 », refusé par le tableau de bord Énergie
     accuracy_decimals: 3
     on_value:
       then:
@@ -632,6 +641,7 @@ sensor:
     id: v4_rssi
     name: "${nom_v4} - RSSI"
     device_class: signal_strength
+    unit_of_measurement: "dBm"  # le composant publie « dbm »
     state_class: measurement
     entity_category: diagnostic
   - platform: template

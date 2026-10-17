@@ -39,6 +39,7 @@ La coque est vendue pour la V3 de la carte. Vérifie que la V4 rentre bien avant
 | `compteur-eau-lora.yaml` | Configuration ESPHome complète (ton compteur + 4 voisins + écran) |
 | `secrets.example.yaml` | Modèle du `secrets.yaml` (à copier et remplir, ne jamais publier le vrai) |
 | `ha_automation_releves_csv.yaml` | Automatisation Home Assistant qui écrit le CSV |
+| `ha_dashboard_compteur_eau.yaml` | Tableau de bord Home Assistant « Compteur d'eau » |
 | `wmbus_log_to_csv.py` | Extrait un CSV à partir d'un log ESPHome |
 
 ## Installation
@@ -142,7 +143,10 @@ Compiler **et** flasher en une seule commande (ESPHome installé localement, `se
 
 ### 3. Home Assistant
 
-L'appareil est découvert par l'intégration ESPHome. Pour le CSV, voir [Export CSV](#export-csv-dans-home-assistant).
+L'appareil est découvert par l'intégration ESPHome. Ensuite :
+- [Tableau de bord Énergie](#tableau-de-bord-énergie-eau) : ajouter l'index comme source d'eau ;
+- [Tableau de bord « Compteur d'eau »](#tableau-de-bord--compteur-deau-) : vue dédiée (jauges, alertes, historique, réglages) ;
+- [Export CSV](#export-csv-dans-home-assistant) : fichier des relevés.
 
 ## La configuration ESPHome expliquée
 
@@ -299,6 +303,7 @@ Paramètres : `p_id` (numéro sur 8 chiffres hexadécimaux), `p_rssi` (dBm), `p_
   - fixe le **1er index du jour** si c'est la première trame de la journée, ou si l'index a reculé (compteur remplacé) ;
   - calcule le **débit** entre deux trames séparées d'au moins **120 s**. En dessous, la résolution de 1 L donne un débit trop imprécis.
 - `Compteur eau - RSSI` : force du signal du compteur.
+- Unités écrites en dur (`m³` sur les index, `dBm` sur les RSSI) : le composant publie `m3` et `dbm`, refusés ou mal reconnus par HA. Voir [Tableau de bord Énergie](#tableau-de-bord-énergie-eau).
 - `WiFi RSSI` : force du signal WiFi, toutes les 30 s.
 - Capteurs `template` : `Débit estimé` (L/h), `Conso dernière heure`, `Conso hier`, `Heures de conso continue`, `Conso aujourd'hui` (recalculée toutes les 60 s, 0 par défaut).
 
@@ -423,6 +428,83 @@ Uniquement pour le compteur de la maison.
 | Compteur silencieux | Aucune trame reçue depuis plus de 6 h |
 
 La résolution de l'index est de 1 L : le débit estimé est donc grossier pour les petits débits.
+
+## Tableau de bord Énergie (eau)
+
+Home Assistant peut suivre la consommation d'eau dans son tableau de bord Énergie ([documentation officielle](https://www.home-assistant.io/docs/energy/water/)). Il calcule lui-même la consommation par heure, jour, semaine et mois à partir de l'**index cumulé** du compteur.
+
+### Quelle entité ajouter
+
+Paramètres → Tableaux de bord → **Énergie** → Consommation d'eau → **Ajouter une source d'eau** → choisir :
+
+`sensor.compteur_eau_lora_compteur_eau_volume_total` (« Compteur eau - Volume total »)
+
+Cette entité a les trois attributs exigés par HA pour l'eau :
+
+| Attribut | Valeur |
+|---|---|
+| `device_class` | `water` |
+| `state_class` | `total_increasing` |
+| `unit_of_measurement` | `m³` (avec le ³ en exposant : `m3` est refusé) |
+
+Ne pas ajouter :
+- « Conso aujourd'hui », « Conso hier », « Conso dernière heure », « Débit estimé » : ce ne sont pas des index cumulés, HA ne les propose d'ailleurs pas ;
+- les index des voisins (`… - Index`) : ils apparaissent dans la liste (mêmes attributs), mais les additionner à ton compteur fausserait ta consommation.
+
+Avec `total_increasing`, si l'index baisse (compteur remplacé), HA démarre un nouveau cycle sans perdre l'historique.
+
+### Pourquoi l'unité est écrite dans le YAML
+
+Le composant `wmbus_meter` devrait transformer l'unité `m3` du champ `total_m3` en `m³`. Sa table de correspondance est mal construite : chaque clé commence par une espace (`' m3'`), la recherche échoue et l'unité brute **`m3`** est publiée (même problème pour `dbm` au lieu de `dBm`). Constaté sur le commit `d9abe6f` de `SzczepanLeon/esphome-components`. Le tableau de bord Énergie refuse alors le capteur.
+
+La configuration écrit donc l'unité en dur sur les 5 index et les 5 RSSI :
+
+```yaml
+- platform: wmbus_meter
+  parent_id: mon_compteur
+  field: total_m3
+  device_class: water
+  state_class: total_increasing
+  unit_of_measurement: "m³"
+```
+
+### Après la mise à jour du firmware
+
+1. Flashe la nouvelle configuration (OTA : ESPHome Builder → Install → Wirelessly).
+2. Outils de développement → États : l'index doit afficher `unit_of_measurement: m³`.
+3. Outils de développement → **Statistiques** : HA signale un **changement d'unité** sur l'index (les anciennes statistiques étaient en `m3`). Clique sur **Corriger** et choisis de **mettre à jour l'unité** des statistiques existantes (ou de les supprimer). Tant que ce problème n'est pas réglé, l'entité reste absente de la liste du tableau de bord Énergie.
+4. Ajoute l'entité comme source d'eau (voir plus haut).
+5. Patiente : les statistiques long terme sont calculées toutes les heures. Les premières barres apparaissent après **1 à 2 h**.
+
+### Si ça ne marche toujours pas
+
+| Symptôme | Piste |
+|---|---|
+| L'entité n'est pas dans la liste | Unité toujours `m3` (ancien firmware) ou problème non corrigé dans Outils de développement → Statistiques |
+| Tableau de bord vide | Moins de 2 h depuis l'ajout, ou aucune trame reçue (index `unknown`) : vérifier l'alerte « Compteur silencieux » |
+| Pic énorme un jour donné | Une trame mal décodée a fait baisser puis remonter l'index : corriger la valeur dans Outils de développement → Statistiques |
+| Entité absente de l'historique | Exclue du `recorder` dans `configuration.yaml`, ou désactivée |
+
+## Tableau de bord « Compteur d'eau »
+
+En plus du tableau de bord Énergie, `ha_dashboard_compteur_eau.yaml` décrit un tableau de bord dédié (vue « Eau », en sections) :
+
+| Section | Contenu |
+|---|---|
+| En direct | Jauges du débit estimé (vert < 300 L/h < orange < 1000 L/h < rouge) et de la conso du jour (vert < 500 L < orange < 800 L < rouge), tuiles index / dernière heure / hier / heures continues |
+| Alertes | Une tuile par alerte active, sinon « ✅ Aucune anomalie détectée » |
+| Historique | Conso du jour et débit sur 24 h, conso **par heure** sur 7 jours, conso **par jour** sur 30 jours, index sur 30 jours |
+| Réglages | Mode absence, seuils de détection, export CSV (activation et intervalle) |
+| Diagnostic | Statut du compteur, RSSI radio et WiFi, compteur silencieux |
+| Signal | Courbe du RSSI radio et WiFi sur 24 h |
+
+**Installation** : Paramètres → Tableaux de bord → **Ajouter un tableau de bord** → Nouveau tableau de bord à partir de zéro, titre « Compteur d'eau ». Ouvre-le, puis crayon → ⋮ → **Éditeur de configuration brute**. Remplace tout le contenu par le fichier et enregistre.
+
+Remarques :
+- Les identifiants d'entités supposent l'appareil nommé `compteur-eau-lora`. Si tu l'as renommé, remplace le préfixe `compteur_eau_lora_`.
+- Les graphiques de conso horaire et journalière utilisent la statistique **`change`** (variation de l'index sur la période). Un capteur `total_increasing` n'a que les statistiques `state`, `sum` et `change`, et un capteur `measurement` n'a que `mean`, `min` et `max`. Demander `max` sur l'index ou `state` sur « Conso dernière heure » donne un graphique vide.
+- Ces deux graphiques ont besoin que l'index soit en `m³` (voir plus haut). Ils restent vides tant que les statistiques sont en erreur.
+- La tuile **« Hier » affiche « Inconnu »** jusqu'au premier minuit après un démarrage de l'ESP : « Conso hier » n'est publiée qu'à minuit. Le graphique « Conso journalière (30 jours) » n'a pas cette limite.
 
 ## Export CSV dans Home Assistant
 

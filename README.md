@@ -447,12 +447,17 @@ Les secrets restent dans ton `secrets.yaml` : seules les variables locales leur 
 | Débit estimé | L/h, calculé entre deux trames espacées d'au moins 120 s |
 | Conso dernière heure | L, mise à jour toutes les heures pile |
 | Conso aujourd'hui / Conso hier | L (voir plus bas) |
+| Conso semaine / Conso mois | L depuis lundi / depuis le 1er du mois (1er index reçu de la période, gardé au redémarrage) |
+| Prix de l'eau au m³ | Réglage (€/m³, abonnement non compris), voir [Prix de l'eau](#prix-de-leau) |
+| Prix de l'eau | Même valeur en capteur (`EUR/m³`), pour le tableau de bord Énergie |
+| Coût aujourd'hui / Coût mois | € = conso × prix au m³ |
+| Compteur eau - Dernière trame | Heure de la dernière trame décodée (HA affiche « il y a 3 minutes ») |
 | Heures de conso continue | Nombre d'heures consécutives avec consommation |
 | Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière | Seuils réglables depuis HA |
 | Mode absence | Interrupteur |
 | 6 capteurs « problème » | Voir [Alertes](#détection-de-fuite-et-alertes) |
 
-**Chaque voisin déclaré** (nom = `nomcompteurN`) : `Nom - Index` (m³), `Nom - Conso aujourd'hui` (L), `Nom - RSSI` (diagnostic).
+**Chaque voisin déclaré** (nom = `nomcompteurN`) : `Nom - Index` (m³), `Nom - Conso aujourd'hui` (L), `Nom - RSSI` et `Nom - Dernière trame` (diagnostic).
 
 ## Calcul de la conso du jour
 
@@ -550,6 +555,26 @@ La configuration écrit donc l'unité en dur sur les 5 index et les 5 RSSI :
 | Pic énorme un jour donné | Une trame mal décodée a fait baisser puis remonter l'index : corriger la valeur dans Outils de développement → Statistiques |
 | Entité absente de l'historique | Exclue du `recorder` dans `configuration.yaml`, ou désactivée |
 
+## Prix de l'eau
+
+Règle **« Prix de l'eau au m³ »** (Réglages du tableau de bord, ou page de l'appareil) avec le prix d'un m³ supplémentaire, **abonnement non compris** : eau potable + assainissement + redevances, TTC. C'est ce prix qui compte pour le coût d'un litre consommé. L'abonnement est fixe : il ne dépend pas de la conso.
+
+Exemple : Grand Besançon Métropole, tarif unique des régies au 1er janvier 2026, tranche 3,1 à 100 m³ ([rapport sur le prix et la qualité des services 2025, conseil communautaire du 24 septembre 2026](https://datasets.grandbesancon.fr/fichiers/delibs/grandBesancon/conseilCommunautaire/2026/20260924/0000C9DA.PDF)) :
+
+| Part | Prix HT | TVA | Prix TTC |
+|---|---|---|---|
+| Eau potable : part variable 1,38 + redevances « préservation de la ressource » 0,065, « consommation eau potable » 0,39 et « performance des réseaux » 0,03 | 1,865 €/m³ | 5,5 % | ≈ 1,97 €/m³ |
+| Assainissement collectif : part variable 1,66 + redevance « performance des systèmes d'assainissement » 0,04 | 1,70 €/m³ | 10 % | ≈ 1,87 €/m³ |
+| **Total** | | | **≈ 3,84 €/m³** |
+
+Le même rapport donne 4,04 € TTC/m³ pour une facture type de 120 m³, abonnements compris (484,23 €). Les 3 premiers m³ par an sont gratuits pour les ménages. Les communes encore en délégation de service public peuvent avoir un autre tarif.
+
+**Autres communes** : l'observatoire national des services d'eau et d'assainissement (SISPEA) publie en [données ouvertes](https://www.services.eaufrance.fr/pro/telechargement) les indicateurs de chaque service, dont le prix TTC au m³ pour 120 m³ (indicateur D102.0 pour l'eau potable). Ces données ont un an de décalage, et c'est un prix moyen abonnement compris. Pour un prix exact, prends le prix variable de ta facture ou du rapport annuel de ta collectivité.
+
+**Tableau de bord Énergie** : Paramètres → Tableaux de bord → Énergie → Consommation d'eau → ton index → **Utiliser une entité avec le prix actuel** → `Prix de l'eau` (capteur en `EUR/m³`). Tu peux aussi choisir un prix fixe.
+
+**Conso semaine et mois** : calculées par l'ESP, comme la conso du jour (1er index reçu depuis lundi ou depuis le 1er du mois). Pas besoin de `configuration.yaml` ni de compteur de services publics. Les graphiques « par semaine » et « par mois » utilisent, eux, les statistiques de l'index.
+
 ## Tableau de bord « Compteur d'eau »
 
 En plus du tableau de bord Énergie, `ha_dashboard_compteur_eau.yaml` décrit un tableau de bord dédié (vue « Eau », en sections) :
@@ -557,10 +582,12 @@ En plus du tableau de bord Énergie, `ha_dashboard_compteur_eau.yaml` décrit un
 | Section | Contenu |
 |---|---|
 | En direct | Jauges du débit estimé (vert < 300 L/h < orange < 1000 L/h < rouge) et de la conso du jour (vert < 500 L < orange < 800 L < rouge), tuiles index / dernière heure / hier / heures continues |
-| Alertes | Une tuile par alerte active, sinon « ✅ Aucune anomalie détectée » |
-| Historique | Conso du jour et débit sur 24 h, conso **par heure** sur 7 jours, conso **par jour** sur 30 jours, index sur 30 jours |
-| Réglages | Mode absence, seuils de détection, export CSV (activation et intervalle) |
-| Diagnostic | Statut du compteur, RSSI radio et WiFi, compteur silencieux |
+| Coûts et périodes | Coût du jour et du mois, conso de la semaine et du mois, conso **par semaine** (12 semaines) et **par mois** (12 mois) |
+| Alertes | Une tuile par alerte active, sinon « ✅ Aucune anomalie détectée », puis le **journal des alertes** sur 7 jours (début et fin de chaque alerte) |
+| Historique | Conso du jour et débit sur 24 h, conso **par heure sur 48 h** (hier et aujourd'hui côte à côte), par heure sur 7 jours, **par jour** sur 30 jours, index sur 30 jours |
+| Actions | Mode absence (+ boutons ntfy dans le tableau de bord généré, si le paquet est installé) |
+| Réglages | Prix de l'eau au m³, seuils de détection, export CSV (activation et intervalle) |
+| Diagnostic | Statut du compteur, dernière trame reçue, RSSI radio et WiFi, compteur silencieux |
 | Signal | Courbe du RSSI radio et WiFi sur 24 h |
 
 ### Générer le tableau de bord avec tes voisins
@@ -578,6 +605,10 @@ Depuis la racine du dépôt, à côté de ton `secrets.yaml` :
 uv run --with pyyaml python scripts/generer_tableau_de_bord.py
 # ou : pip install pyyaml && python3 scripts/generer_tableau_de_bord.py
 ```
+
+Il ajuste aussi :
+- **les jauges** : max et paliers calculés à partir des seuils d'alerte (débit : orange à 30 % du seuil, rouge au seuil, max à 150 % ; conso du jour : orange à 62,5 %, rouge au seuil, max à 125 %). Il prend les valeurs initiales de la configuration. Si tu as changé un seuil dans HA, passe-le avec `--seuil-debit 1500` ou `--seuil-jour 600` ;
+- **la carte Actions** : interrupteur et boutons ntfy (message de test, envoi des bilans), seulement si le paquet ntfy est inclus dans `packages:`.
 
 Le script écrit `ha_dashboard_compteur_eau.genere.yaml`, ignoré par git car il contient les noms des voisins. Relance-le après chaque ajout ou retrait de voisin. Options : `--config`, `--secrets`, `--sortie`, et `--appareil` si ton appareil n'a plus le nom `Compteur Eau LoRa` dans HA.
 

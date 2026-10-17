@@ -7,6 +7,9 @@ Le script lit :
   - secrets.yaml : valeurs des « !secret » (noms des voisins) ;
   - ha_dashboard_compteur_eau.yaml : vue de base (ton compteur).
 
+Il règle aussi les jauges sur les seuils d'alerte (valeurs initiales de la configuration, ou
+--seuil-debit / --seuil-jour) et ajoute les boutons ntfy si ce paquet est inclus.
+
 Il écrit ha_dashboard_compteur_eau.genere.yaml (ignoré par git : il contient les noms
 des voisins), à coller dans Home Assistant (crayon > ⋮ > Éditeur de configuration brute).
 
@@ -176,6 +179,8 @@ def vue_voisins(voisins: list[dict], appareil: str) -> dict:
                  "name": "Aujourd'hui", "icon": "mdi:calendar-today", "vertical": True},
                 {"type": "tile", "entity": entite("sensor", appareil, f"{nom} - RSSI"),
                  "name": "Signal radio", "icon": "mdi:radio-tower", "vertical": True},
+                {"type": "tile", "entity": entite("sensor", appareil, f"{nom} - Dernière trame"),
+                 "name": "Dernière trame", "icon": "mdi:clock-check-outline", "vertical": True},
                 {
                     "type": "statistics-graph",
                     "title": "Conso journalière (30 jours)",
@@ -191,6 +196,69 @@ def vue_voisins(voisins: list[dict], appareil: str) -> dict:
         "title": "Voisins", "path": "voisins", "icon": "mdi:account-group",
         "type": "sections", "max_columns": 3, "sections": sections,
     }
+
+
+# ───────────────────────────── Jauges et actions ─────────────────────────────
+
+def valeur_initiale(config: dict, ident: str) -> float | None:
+    for n in config.get("number") or []:
+        if isinstance(n, dict) and n.get("id") == ident and "initial_value" in n:
+            return float(n["initial_value"])
+    return None
+
+
+def regler_jauges(tableau: dict, appareil: str, seuil_debit: float, seuil_jour: float) -> None:
+    """Max et paliers des jauges dérivés des seuils (mêmes proportions que les valeurs d'origine)."""
+    regles = {
+        entite("sensor", appareil, "Débit estimé"): (seuil_debit, 0.3, 1.5),
+        entite("sensor", appareil, "Conso aujourd'hui"): (seuil_jour, 0.625, 1.25),
+    }
+    for carte in cartes(tableau):
+        r = regles.get(carte.get("entity")) if carte.get("type") == "gauge" else None
+        if not r:
+            continue
+        seuil, orange, maxi = r
+        carte["max"] = round(seuil * maxi)
+        carte["segments"] = [
+            {"from": 0, "color": "#43a047"},
+            {"from": round(seuil * orange), "color": "#fb8c00"},
+            {"from": round(seuil), "color": "#e53935"},
+        ]
+
+
+def cartes(tableau: dict):
+    for vue in tableau.get("views", []):
+        for section in vue.get("sections", []):
+            yield from section.get("cards", [])
+
+
+def paquet_ntfy(config: dict) -> bool:
+    for pkg in (config.get("packages") or {}).values():
+        if isinstance(pkg, str) and "ntfy.yaml" in pkg:
+            return True
+        if isinstance(pkg, Include) and pkg.fichier.endswith("ntfy.yaml"):
+            return True
+        if isinstance(pkg, dict) and any("ntfy.yaml" in str(f) for f in pkg.get("files") or []):
+            return True
+    return False
+
+
+def ajouter_actions_ntfy(tableau: dict, appareil: str) -> None:
+    for vue in tableau.get("views", []):
+        for section in vue.get("sections", []):
+            titres = [c.get("heading") for c in section.get("cards", []) if c.get("type") == "heading"]
+            if "Actions" in titres:
+                section["cards"].append({
+                    "type": "entities",
+                    "title": "Notifications ntfy",
+                    "show_header_toggle": False,
+                    "entities": [
+                        {"entity": entite("switch", appareil, "ntfy - notifications actives"), "name": "Notifications actives"},
+                        {"entity": entite("button", appareil, "ntfy - message de test"), "name": "Message de test"},
+                        {"entity": entite("button", appareil, "ntfy - envoyer les bilans maintenant"), "name": "Envoyer les bilans maintenant"},
+                    ],
+                })
+                return
 
 
 # ───────────────────────────── Programme principal ─────────────────────────────
@@ -210,6 +278,8 @@ def main() -> None:
     ap.add_argument("--base", type=Path, default=racine / "ha_dashboard_compteur_eau.yaml")
     ap.add_argument("--sortie", type=Path, default=racine / "ha_dashboard_compteur_eau.genere.yaml")
     ap.add_argument("--appareil", help="nom de l'appareil dans HA (défaut : friendly_name de la configuration)")
+    ap.add_argument("--seuil-debit", type=float, help="seuil de débit anormal en L/h (défaut : valeur de la configuration)")
+    ap.add_argument("--seuil-jour", type=float, help="seuil de conso journalière en L (défaut : valeur de la configuration)")
     args = ap.parse_args()
 
     chemin_secrets = args.secrets or args.config.parent / "secrets.yaml"
@@ -227,10 +297,18 @@ def main() -> None:
     vues.append(vue_voisins(voisins, appareil))
     tableau["views"] = vues
 
+    seuil_debit = args.seuil_debit or valeur_initiale(config, "seuil_debit_l_h") or 1000
+    seuil_jour = args.seuil_jour or valeur_initiale(config, "seuil_jour_l") or 800
+    regler_jauges(tableau, appareil, seuil_debit, seuil_jour)
+    ntfy = paquet_ntfy(config)
+    if ntfy:
+        ajouter_actions_ntfy(tableau, appareil)
+
     entete = (
         "# Tableau de bord GÉNÉRÉ par scripts/generer_tableau_de_bord.py : ne pas modifier à la main,\n"
         "# relancer le script après avoir ajouté ou retiré un voisin.\n"
         f"# Appareil : {appareil} | voisins : {', '.join(v['nom'] for v in voisins) or 'aucun'}\n"
+        f"# Jauges : seuil débit {seuil_debit:g} L/h, seuil jour {seuil_jour:g} L | ntfy : {'oui' if ntfy else 'non'}\n"
     )
     texte = yaml.dump(tableau, Dumper=Dumper, allow_unicode=True, sort_keys=False, width=1000)
     args.sortie.write_text(entete + texte, encoding="utf-8")

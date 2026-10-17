@@ -1,14 +1,16 @@
 # ══════════════════════════════════════════════════════════════════════════════
 #  voisins/voisin.yaml : modèle d'UN compteur voisin (paquet ESPHome avec variables)
 #
-#  À inclure une fois par voisin dans compteur-eau-lora.yaml (de 0 à 10 voisins) :
+#  Inclus automatiquement par voisins/voisins.yaml pour chaque « compteurN » de secrets.yaml.
+#  Inclusion manuelle toujours possible (à la place de voisins/voisins.yaml, pas en plus) :
 #
 #    packages:
 #      voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }
 #
 #  Variables :
 #    i     numéro du voisin, de 1 à 10, unique (sert aux identifiants : v1_total, compteur_v1…)
-#    num   numéro du compteur, chaîne "0x12345678" (chiffres imprimés sur le compteur)
+#    num   numéro du compteur : "0x12345678" (chiffres imprimés sur le compteur, avec « 0x »)
+#          ou nombre déjà converti (voisins/voisins.yaml)
 #    nom   nom affiché dans Home Assistant (« Dupont - Index »…)
 #    type  facultatif : pilote wmbus_meter (dme_07 par défaut, izar pour un compteur Izar…)
 #
@@ -26,7 +28,7 @@ esphome:
     - priority: 600
       then:
         - lambda: |-
-            uint32_t numero = (uint32_t) strtoul("${num}", nullptr, 16);
+            uint32_t numero = (uint32_t) ${num};   // littéral C++ : 0x12345678 ou nombre
             id(g_voisins)[numero] = ${i};
             id(g_v_infos)[${i}] = [](std::string &nom, double &total, double &conso) {
               nom = "${nom}";

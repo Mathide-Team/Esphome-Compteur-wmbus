@@ -1,0 +1,70 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  voisins/voisins.yaml : voisins déduits de secrets.yaml (0 à 10), sans ligne à écrire,
+#  plus la clé AES et les capteurs Izar de TON compteur (aes, type_compteur)
+#
+#  Inclus une seule fois par compteur-eau-lora.yaml :
+#      packages:
+#        voisins: !include voisins/voisins.yaml
+#
+#  Un voisin N (1 à 10) existe si « compteurN » est présent et non vide dans secrets.yaml :
+#    compteurN       numéro du compteur ("0x23456789" ; le « 0x » est facultatif, lu en hexadécimal)
+#    nomcompteurN    nom affiché (facultatif, « Voisin N » par défaut)
+#    aesvN           clé AES-128 en 32 caractères hexadécimaux (facultatif : absente ou "" = en clair)
+#    typecompteurN   pilote (facultatif : type_compteur par défaut, lui-même dme_07 par défaut)
+#
+#  Ton compteur (mon_compteur) :
+#    aes             sa clé AES (facultatif : absente ou "" = en clair)
+#    type_compteur   izar → capteurs Izar en plus (options/izar.yaml)
+#
+#  secrets.yaml est fusionné dans les substitutions de compteur-eau-lora.yaml
+#  (« <<: !include secrets.yaml ») : c'est ce qui permet d'en tester les entrées ici.
+#  Ce fichier ne contient aucun secret : il peut aussi être chargé depuis GitHub (voir README).
+# ══════════════════════════════════════════════════════════════════════════════
+
+substitutions:
+  cle_0: !include { file: cle.yaml, vars: { compteur: mon_compteur, cle: "${ aes | default('') }" } }
+  izar_0: !include ../options/izar.yaml
+  voisin_1: !include { file: voisin.yaml, vars: { i: 1, num: "${ (compteur1 | default('0')) | int(0, 16) }", nom: "${ nomcompteur1 | default('Voisin 1') }", type: "${ typecompteur1 | default(type_compteur | default('dme_07')) }" } }
+  cle_1: !include { file: cle.yaml, vars: { compteur: compteur_v1, cle: "${ aesv1 | default('') }" } }
+  voisin_2: !include { file: voisin.yaml, vars: { i: 2, num: "${ (compteur2 | default('0')) | int(0, 16) }", nom: "${ nomcompteur2 | default('Voisin 2') }", type: "${ typecompteur2 | default(type_compteur | default('dme_07')) }" } }
+  cle_2: !include { file: cle.yaml, vars: { compteur: compteur_v2, cle: "${ aesv2 | default('') }" } }
+  voisin_3: !include { file: voisin.yaml, vars: { i: 3, num: "${ (compteur3 | default('0')) | int(0, 16) }", nom: "${ nomcompteur3 | default('Voisin 3') }", type: "${ typecompteur3 | default(type_compteur | default('dme_07')) }" } }
+  cle_3: !include { file: cle.yaml, vars: { compteur: compteur_v3, cle: "${ aesv3 | default('') }" } }
+  voisin_4: !include { file: voisin.yaml, vars: { i: 4, num: "${ (compteur4 | default('0')) | int(0, 16) }", nom: "${ nomcompteur4 | default('Voisin 4') }", type: "${ typecompteur4 | default(type_compteur | default('dme_07')) }" } }
+  cle_4: !include { file: cle.yaml, vars: { compteur: compteur_v4, cle: "${ aesv4 | default('') }" } }
+  voisin_5: !include { file: voisin.yaml, vars: { i: 5, num: "${ (compteur5 | default('0')) | int(0, 16) }", nom: "${ nomcompteur5 | default('Voisin 5') }", type: "${ typecompteur5 | default(type_compteur | default('dme_07')) }" } }
+  cle_5: !include { file: cle.yaml, vars: { compteur: compteur_v5, cle: "${ aesv5 | default('') }" } }
+  voisin_6: !include { file: voisin.yaml, vars: { i: 6, num: "${ (compteur6 | default('0')) | int(0, 16) }", nom: "${ nomcompteur6 | default('Voisin 6') }", type: "${ typecompteur6 | default(type_compteur | default('dme_07')) }" } }
+  cle_6: !include { file: cle.yaml, vars: { compteur: compteur_v6, cle: "${ aesv6 | default('') }" } }
+  voisin_7: !include { file: voisin.yaml, vars: { i: 7, num: "${ (compteur7 | default('0')) | int(0, 16) }", nom: "${ nomcompteur7 | default('Voisin 7') }", type: "${ typecompteur7 | default(type_compteur | default('dme_07')) }" } }
+  cle_7: !include { file: cle.yaml, vars: { compteur: compteur_v7, cle: "${ aesv7 | default('') }" } }
+  voisin_8: !include { file: voisin.yaml, vars: { i: 8, num: "${ (compteur8 | default('0')) | int(0, 16) }", nom: "${ nomcompteur8 | default('Voisin 8') }", type: "${ typecompteur8 | default(type_compteur | default('dme_07')) }" } }
+  cle_8: !include { file: cle.yaml, vars: { compteur: compteur_v8, cle: "${ aesv8 | default('') }" } }
+  voisin_9: !include { file: voisin.yaml, vars: { i: 9, num: "${ (compteur9 | default('0')) | int(0, 16) }", nom: "${ nomcompteur9 | default('Voisin 9') }", type: "${ typecompteur9 | default(type_compteur | default('dme_07')) }" } }
+  cle_9: !include { file: cle.yaml, vars: { compteur: compteur_v9, cle: "${ aesv9 | default('') }" } }
+  voisin_10: !include { file: voisin.yaml, vars: { i: 10, num: "${ (compteur10 | default('0')) | int(0, 16) }", nom: "${ nomcompteur10 | default('Voisin 10') }", type: "${ typecompteur10 | default(type_compteur | default('dme_07')) }" } }
+  cle_10: !include { file: cle.yaml, vars: { compteur: compteur_v10, cle: "${ aesv10 | default('') }" } }
+
+packages:
+  cle0: ${ cle_0 if aes | default('') else {} }
+  izar: ${ izar_0 if (type_compteur | default('dme_07')) == 'izar' else {} }
+  voisin1: ${ voisin_1 if compteur1 | default('') else {} }
+  cle1: ${ cle_1 if compteur1 | default('') and aesv1 | default('') else {} }
+  voisin2: ${ voisin_2 if compteur2 | default('') else {} }
+  cle2: ${ cle_2 if compteur2 | default('') and aesv2 | default('') else {} }
+  voisin3: ${ voisin_3 if compteur3 | default('') else {} }
+  cle3: ${ cle_3 if compteur3 | default('') and aesv3 | default('') else {} }
+  voisin4: ${ voisin_4 if compteur4 | default('') else {} }
+  cle4: ${ cle_4 if compteur4 | default('') and aesv4 | default('') else {} }
+  voisin5: ${ voisin_5 if compteur5 | default('') else {} }
+  cle5: ${ cle_5 if compteur5 | default('') and aesv5 | default('') else {} }
+  voisin6: ${ voisin_6 if compteur6 | default('') else {} }
+  cle6: ${ cle_6 if compteur6 | default('') and aesv6 | default('') else {} }
+  voisin7: ${ voisin_7 if compteur7 | default('') else {} }
+  cle7: ${ cle_7 if compteur7 | default('') and aesv7 | default('') else {} }
+  voisin8: ${ voisin_8 if compteur8 | default('') else {} }
+  cle8: ${ cle_8 if compteur8 | default('') and aesv8 | default('') else {} }
+  voisin9: ${ voisin_9 if compteur9 | default('') else {} }
+  cle9: ${ cle_9 if compteur9 | default('') and aesv9 | default('') else {} }
+  voisin10: ${ voisin_10 if compteur10 | default('') else {} }
+  cle10: ${ cle_10 if compteur10 | default('') and aesv10 | default('') else {} }

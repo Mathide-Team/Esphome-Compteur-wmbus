@@ -4,3 +4,4 @@ releves*.csv
 .esphome/
 ha_dashboard_compteur_eau.genere.yaml
 ci-voisins-*.yaml
+ci-secrets-*.yaml

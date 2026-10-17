@@ -49,6 +49,28 @@ globals:
     type: int
     restore_value: yes
     initial_value: '-1'
+  # Alertes du voisin : mêmes règles et mêmes seuils que pour ton compteur
+  - id: v${i}_rx_ts         # heure de la dernière trame (compteur silencieux)
+    type: uint32_t
+    initial_value: '0'
+  - id: v${i}_flow_total    # point de référence du calcul de débit
+    type: double
+    initial_value: '0'
+  - id: v${i}_flow_ts
+    type: uint32_t
+    initial_value: '0'
+  - id: v${i}_hour_start    # index au début de l'heure courante
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: v${i}_leak_hours    # heures consécutives avec conso
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: v${i}_night_flag    # fuite suspectée la nuit (à 5 h, au moins 3 h de conso d'affilée)
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
 
 wmbus_meter:
   - id: compteur_v${i}
@@ -65,6 +87,23 @@ time:
         hours: 0
         then:
           - component.update: v${i}_conso_jour
+      # Chaque heure pile : conso de l'heure écoulée et détection de fuite (comme ton compteur)
+      - seconds: 0
+        minutes: 0
+        then:
+          - lambda: |-
+              double total = id(v${i}_total);
+              if (total <= 0) return;
+              if (id(v${i}_hour_start) <= 0 || total < id(v${i}_hour_start)) { id(v${i}_hour_start) = total; return; }
+              double litres = (total - id(v${i}_hour_start)) * 1000.0;
+              id(v${i}_hour_start) = total;
+              if (litres >= id(seuil_fuite_l).state) {
+                id(v${i}_leak_hours)++;
+              } else {
+                id(v${i}_leak_hours) = 0;
+                id(v${i}_night_flag) = false;
+              }
+              if (id(ha_time).now().hour == 5 && id(v${i}_leak_hours) >= 3) id(v${i}_night_flag) = true;
 
 sensor:
   - platform: wmbus_meter
@@ -89,8 +128,17 @@ sensor:
               id(v${i}_day) = now.day_of_year;
             }
             id(v${i}_conso_jour).update();
+            uint32_t ts = (uint32_t) now.timestamp;
+            id(v${i}_rx_ts) = ts;
+            // Débit entre deux trames séparées d'au moins 120 s (résolution de 1 L)
+            if (id(v${i}_flow_ts) == 0 || total < id(v${i}_flow_total)) {
+              id(v${i}_flow_total) = total; id(v${i}_flow_ts) = ts;
+            } else if (ts - id(v${i}_flow_ts) >= 120) {
+              id(v${i}_debit).publish_state((total - id(v${i}_flow_total)) * 1000.0 / ((ts - id(v${i}_flow_ts)) / 3600.0));
+              id(v${i}_flow_total) = total; id(v${i}_flow_ts) = ts;
+            }
             // Dernière trame (horodatage UTC : HA l'affiche « il y a 3 minutes »)
-            char b[32]; time_t t = (time_t) now.timestamp; struct tm tu; gmtime_r(&t, &tu);
+            char b[32]; time_t t = (time_t) ts; struct tm tu; gmtime_r(&t, &tu);
             strftime(b, sizeof(b), "%Y-%m-%dT%H:%M:%S+00:00", &tu);
             id(v${i}_derniere_trame).publish_state(b);
   - platform: wmbus_meter
@@ -102,6 +150,12 @@ sensor:
     unit_of_measurement: "dBm"  # le composant publie « dbm »
     state_class: measurement
     entity_category: diagnostic
+  - platform: template
+    id: v${i}_debit
+    name: "${nom} - Débit estimé"
+    unit_of_measurement: "L/h"
+    accuracy_decimals: 0
+    state_class: measurement
   - platform: template
     id: v${i}_conso_jour
     name: "${nom} - Conso aujourd'hui"
@@ -121,3 +175,42 @@ text_sensor:
     name: "${nom} - Dernière trame"
     device_class: timestamp
     entity_category: diagnostic
+
+# Alertes du voisin (mêmes seuils que ton compteur : réglages « Fuite - … », « Seuil … »).
+# Le paquet ntfy peut les envoyer sur le sujet du voisin.
+binary_sensor:
+  - platform: template
+    id: v${i}_fuite_confirmee
+    name: "${nom} - Fuite confirmée"
+    device_class: problem
+    lambda: 'return id(v${i}_leak_hours) >= (int) id(seuil_fuite_heures).state;'
+  - platform: template
+    id: v${i}_fuite_nuit
+    name: "${nom} - Fuite suspectée (nuit)"
+    device_class: problem
+    lambda: 'return id(v${i}_night_flag);'
+  - platform: template
+    id: v${i}_debit_anormal
+    name: "${nom} - Débit anormal"
+    device_class: problem
+    lambda: |-
+      if (!id(v${i}_debit).has_state()) return false;
+      return id(v${i}_debit).state > id(seuil_debit_l_h).state;
+    filters:
+      - delayed_on: 10min
+  - platform: template
+    id: v${i}_conso_anormale
+    name: "${nom} - Conso journalière anormale"
+    device_class: problem
+    lambda: |-
+      if (!id(v${i}_conso_jour).has_state()) return false;
+      return id(v${i}_conso_jour).state > id(seuil_jour_l).state;
+  - platform: template
+    id: v${i}_silencieux
+    name: "${nom} - Compteur silencieux"
+    device_class: problem
+    entity_category: diagnostic
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(v${i}_rx_ts) == 0) return false;
+      return ((uint32_t) now.timestamp - id(v${i}_rx_ts)) > (uint32_t) id(seuil_silence_h).state * 3600;

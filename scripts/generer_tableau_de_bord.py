@@ -181,6 +181,20 @@ def vue_voisins(voisins: list[dict], appareil: str) -> dict:
                  "name": "Signal radio", "icon": "mdi:radio-tower", "vertical": True},
                 {"type": "tile", "entity": entite("sensor", appareil, f"{nom} - Dernière trame"),
                  "name": "Dernière trame", "icon": "mdi:clock-check-outline", "vertical": True},
+                {"type": "tile", "entity": entite("sensor", appareil, f"{nom} - Débit estimé"),
+                 "name": "Débit estimé", "icon": "mdi:speedometer", "vertical": True},
+                {
+                    # Alertes du voisin (mêmes règles et seuils que ton compteur)
+                    "type": "entities",
+                    "title": "Alertes",
+                    "show_header_toggle": False,
+                    "state_color": True,
+                    "entities": [
+                        {"entity": entite("binary_sensor", appareil, f"{nom} - {alerte}"), "name": alerte}
+                        for alerte in ("Fuite confirmée", "Fuite suspectée (nuit)", "Débit anormal",
+                                       "Conso journalière anormale", "Compteur silencieux")
+                    ],
+                },
                 {
                     "type": "statistics-graph",
                     "title": "Conso journalière (30 jours)",

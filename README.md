@@ -162,13 +162,12 @@ Cette section suit `compteur-eau-lora.yaml` bloc par bloc, dans l'ordre du fichi
 ```yaml
 num_compteur: !secret compteur0
 nom_moi: "Mon compteur"
-nom_v1: !secret nomcompteur1     # compatibilité paquet ntfy (voisins 1 à 4)
-...
 mdi_url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/..."
 ```
 
 - `${num_compteur}` : numéro de ton compteur, lu dans `secrets.yaml`. ESPHome le remplace partout dans le fichier : `meter_id` de `wmbus_meter`, reconnaissance de ton compteur dans `on_frame`, numéro affiché à l'écran.
-- `${nom_v1}`… `${nom_v4}` : gardés seulement pour le paquet ntfy actuel, qui envoie les bilans des voisins 1 à 4. Les voisins eux-mêmes sont déclarés dans `packages:` (voir [Voisins](#voisins--de-0-à-10)).
+- `fuseau`, `bouton_pin` : fuseau de l'heure Internet et broche du bouton de la carte.
+- Les voisins ne sont plus des substitutions : ils sont déclarés dans `packages:` (voir [Voisins](#voisins--de-0-à-10)).
 - `nom_moi` : nom donné à ton propre compteur dans l'événement CSV.
 - `mdi_url` : police d'icônes Material Design, **figée en version 7.4.47** pour que les codes des icônes (`\U000F058C`…) ne changent pas lors d'une mise à jour.
 
@@ -401,7 +400,7 @@ packages:
 
 **Aucun voisin** : supprime toutes les lignes `voisinN` et remplace `packages:` par `packages: {}`.
 
-> Paquet ntfy : sa version actuelle envoie les bilans des voisins **1 à 4** et lit `nom_v1`… `nom_v4` dans `substitutions`. Garde ces 4 voisins (et ces substitutions) tant que tu l'utilises ; le passage du paquet aux voisins dynamiques est suivi dans [Esphome-Compteur-wmbus-ntfy#5](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy/issues/5).
+> Paquet ntfy : chaque voisin y a aussi sa ligne (`ntfy-voisin.yaml`, même `i`), avec son sujet. Il reçoit son bilan et les alertes de son compteur. Voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy). Il faut la version du paquet qui gère les voisins dynamiques : les anciennes versions (4 voisins fixes, `id: ntfy_time`) ne compilent plus avec cette configuration.
 
 ### Dans ESPHome Builder
 
@@ -459,13 +458,21 @@ Les secrets restent dans ton `secrets.yaml` : seules les variables locales leur 
 | Coût aujourd'hui / Coût mois | € = conso × prix au m³ |
 | Compteur eau - Dernière trame | Heure de la dernière trame décodée (HA affiche « il y a 3 minutes ») |
 | Heures de conso continue | Nombre d'heures consécutives avec consommation |
-| Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière | Seuils réglables depuis HA |
+| Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière, Compteur silencieux après | Seuils réglables depuis HA (communs à ton compteur et aux voisins ; silencieux : 6 h par défaut) |
 | Mode absence | Interrupteur |
 | Écran - extinction nocturne, Écran - extinction à, Écran - rallumage à | Interrupteur et heures (0 à 23) de l'extinction de l'OLED, 22 h → 7 h par défaut |
 | Bouton de la carte | État du bouton PRG (diagnostic) |
 | 6 capteurs « problème » | Voir [Alertes](#détection-de-fuite-et-alertes) |
 
-**Chaque voisin déclaré** (nom = `nomcompteurN`) : `Nom - Index` (m³), `Nom - Conso aujourd'hui` (L), `Nom - RSSI` et `Nom - Dernière trame` (diagnostic).
+**Chaque voisin déclaré** (nom = `nomcompteurN`) :
+
+| Entité | Description |
+|---|---|
+| Nom - Index | m³ |
+| Nom - Conso aujourd'hui | L |
+| Nom - Débit estimé | L/h, entre deux trames espacées d'au moins 120 s |
+| Nom - RSSI, Nom - Dernière trame | Diagnostic |
+| Nom - Fuite confirmée, Fuite suspectée (nuit), Débit anormal, Conso journalière anormale, Compteur silencieux | Les mêmes alertes que pour ton compteur, avec les **mêmes seuils** (pas de mode absence pour les voisins) |
 
 ## Calcul de la conso du jour
 
@@ -506,7 +513,7 @@ Si l'ESP ne connaît pas l'heure (ni HA ni Internet), l'écran reste allumé.
 
 ## Détection de fuite et alertes
 
-Uniquement pour le compteur de la maison.
+Pour ton compteur **et pour chaque voisin déclaré** : mêmes règles, mêmes seuils. Le mode absence ne concerne que ton compteur.
 
 | Alerte | Se déclenche quand |
 |---|---|
@@ -515,9 +522,11 @@ Uniquement pour le compteur de la maison.
 | Débit anormal | Débit estimé supérieur à `Seuil débit anormal` (1000 L/h par défaut) pendant 10 min |
 | Conso journalière anormale | Conso du jour supérieure à `Seuil conso journalière` (800 L par défaut) |
 | Conso pendant absence | `Mode absence` activé et au moins 1 L consommé pendant l'heure écoulée |
-| Compteur silencieux | Aucune trame reçue depuis plus de 6 h |
+| Compteur silencieux | Aucune trame reçue depuis plus de `Compteur silencieux après` heures (6 par défaut). Il faut avoir reçu au moins une trame depuis le démarrage de l'ESP |
 
 La résolution de l'index est de 1 L : le débit estimé est donc grossier pour les petits débits.
+
+Les alertes d'un voisin s'appellent « Dupont - Fuite confirmée »… Le paquet ntfy peut les envoyer sur le sujet de ce voisin (voir [Esphome-Compteur-wmbus-ntfy#5](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy/issues/5)).
 
 ## Tableau de bord Énergie (eau)
 
@@ -617,7 +626,7 @@ En plus du tableau de bord Énergie, `ha_dashboard_compteur_eau.yaml` décrit un
 | Section | Contenu |
 |---|---|
 | Tous les compteurs | Conso par jour sur 30 jours (toi + chaque voisin, en barres), RSSI radio de tous les compteurs sur 24 h |
-| Une section par voisin | Index, conso du jour, signal radio, conso par jour sur 30 jours |
+| Une section par voisin | Index, conso du jour, signal radio, dernière trame, débit, ses 5 alertes, conso par jour sur 30 jours |
 
 Depuis la racine du dépôt, à côté de ton `secrets.yaml` :
 
@@ -670,16 +679,22 @@ Exemple avec des numéros fictifs. Pour les compteurs **inconnus**, seuls le num
 Le dépôt compagnon **[Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy)** ajoute des notifications push [ntfy](https://ntfy.sh). L'ESP les envoie **lui-même** en HTTPS : elles ne passent ni par Home Assistant, ni par `notify`, ni par MQTT.
 
 - **Toi** : alertes (fuite confirmée, fuite de nuit, débit anormal, conso élevée, conso pendant une absence, compteur silencieux), fins d'alerte et bilan quotidien. Elles arrivent même si Home Assistant est arrêté.
-- **Chaque voisin** : bilan quotidien de **son** compteur (conso du jour + index) sur **son** sujet ntfy. Il le lit dans l'appli ntfy (Android, iOS, navigateur) ou dans sa propre domotique (Home Assistant, Jeedom, Domoticz, openHAB, Node-RED… : tout ce qui sait lire un flux HTTP JSON, SSE ou WebSocket). Un voisin n'a besoin d'**aucune** installation chez lui.
+- **Chaque voisin** : bilan quotidien de **son** compteur (conso du jour + index) et alertes de **son** compteur (fuite, débit, conso élevée, compteur silencieux) sur **son** sujet ntfy. Il le lit dans l'appli ntfy (Android, iOS, navigateur) ou dans sa propre domotique (Home Assistant, Jeedom, Domoticz, openHAB, Node-RED… : tout ce qui sait lire un flux HTTP JSON, SSE ou WebSocket). Un voisin n'a besoin d'**aucune** installation chez lui.
 
 Mise en place, en résumé :
 
-1. Un sujet aléatoire par personne dans `secrets.yaml` (`ntfy_topic_moi`, `ntfy_topic_v1` … `ntfy_topic_v4`, `""` = rien). Sur ntfy.sh, **le nom du sujet sert de mot de passe**.
-2. Ces sujets ajoutés aux `substitutions` de `compteur-eau-lora.yaml`.
-3. Le paquet ajouté à la configuration, sans rien modifier d'autre :
+1. Un sujet aléatoire par personne dans `secrets.yaml` (`ntfy_topic_moi`, `ntfy_topic_v1`…, `""` = rien). Sur ntfy.sh, **le nom du sujet sert de mot de passe**.
+2. `ntfy_topic_moi: !secret ntfy_topic_moi` ajouté aux `substitutions` de `compteur-eau-lora.yaml`.
+3. Le paquet, puis une ligne par voisin (même `i` que sa ligne `voisins/voisin.yaml`), ajoutés à `packages:` :
    ```yaml
    packages:
      ntfy: github://Mathide-Team/Esphome-Compteur-wmbus-ntfy/ntfy.yaml@main
+     ntfy_voisin1:
+       url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy
+       ref: main
+       files:
+         - path: ntfy-voisin.yaml
+           vars: { i: 1, nom: !secret nomcompteur1, topic: !secret ntfy_topic_v1 }
    ```
 4. Flash, puis bouton **« ntfy - message de test »**.
 

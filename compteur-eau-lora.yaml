@@ -23,12 +23,6 @@ substitutions:
   nom_moi: "Mon compteur"   # nom écrit dans le CSV pour ton propre compteur
   fuseau: "Europe/Paris"   # fuseau horaire de l'heure Internet (SNTP), utilisé si HA est arrêté
   bouton_pin: GPIO0        # bouton PRG de la carte (brochage Heltec V3/V4) : page suivante, réveil de l'écran
-  # Compatibilité avec le paquet ntfy actuel (bilans des voisins 1 à 4, qui lit ${nom_v1}…) :
-  # à garder tant que tu utilises ce paquet dans sa version à 4 voisins fixes.
-  nom_v1: !secret nomcompteur1
-  nom_v2: !secret nomcompteur2
-  nom_v3: !secret nomcompteur3
-  nom_v4: !secret nomcompteur4
   # Police des pictogrammes (Material Design Icons, version figée)
   mdi_url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
 
@@ -650,6 +644,18 @@ number:
     unit_of_measurement: "h"
     entity_category: config
   - platform: template
+    id: seuil_silence_h
+    name: "Compteur silencieux après"
+    optimistic: true
+    restore_value: true
+    initial_value: 6
+    min_value: 1
+    max_value: 72
+    step: 1
+    mode: box
+    unit_of_measurement: "h"
+    entity_category: config
+  - platform: template
     id: csv_intervalle_min
     name: "Export CSV - intervalle"
     optimistic: true
@@ -752,7 +758,7 @@ binary_sensor:
     lambda: |-
       auto now = id(ha_time).now();
       if (!now.is_valid() || id(g_rx_ts) == 0) return false;
-      return ((uint32_t) now.timestamp - id(g_rx_ts)) > 6 * 3600;
+      return ((uint32_t) now.timestamp - id(g_rx_ts)) > (uint32_t) id(seuil_silence_h).state * 3600;
 
 # ───────────────────────── Écran OLED (SSD1306 128x64 de la carte) ─────────────────────────
 

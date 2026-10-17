@@ -1,0 +1,958 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  compteur-eau-lora : compteur d'eau Izar / DME (wM-Bus) → Home Assistant
+#  Carte Heemol « Lora 32 V4 » : ESP32-S3 + SX1262 + OLED SSD1306 128x64
+#
+#  secrets.yaml requis :
+#    wifi_ssid, wifi_password, fallback_hotspot_ssid, fallback_hotspot_password,
+#    ota_password,
+#    compteur0 … compteur4   (chaînes entre guillemets, ex. "0x30703283"),
+#    nomcompteur1 … nomcompteur4
+#
+#  Export CSV : l'ESP n'écrit aucun fichier. Il envoie un évènement
+#  « esphome.wmbus_trame » à Home Assistant pour chaque compteur entendu (connu
+#  ou inconnu) ; HA ajoute la ligne au CSV avec notify.send_message (voir README.md).
+# ══════════════════════════════════════════════════════════════════════════════
+
+substitutions:
+  # Numéro de TON compteur (secret compteur0, au format "0x30703283", entre guillemets).
+  # Sert au récepteur wM-Bus et à l'écran 1 (affiché sans le « 0x »)
+  num_compteur: !secret compteur0
+  nom_moi: "Mon compteur"   # nom écrit dans le CSV pour ton propre compteur
+  # Voisins (secrets compteur1..4 et nomcompteur1..4)
+  num_v1: !secret compteur1
+  nom_v1: !secret nomcompteur1
+  num_v2: !secret compteur2
+  nom_v2: !secret nomcompteur2
+  num_v3: !secret compteur3
+  nom_v3: !secret nomcompteur3
+  num_v4: !secret compteur4
+  nom_v4: !secret nomcompteur4
+  # Police des pictogrammes (Material Design Icons, version figée)
+  mdi_url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
+
+esphome:
+  name: compteur-eau-lora
+  friendly_name: Compteur Eau LoRa
+  # Vext doit être allumé APRÈS le setup() de la sortie GPIO (priorité 800, qui la remet à l'arrêt)
+  # et AVANT l'init de l'OLED (priorité 400) : d'où 799. À 800, l'OLED restait éteint (écran noir).
+  on_boot:
+    priority: 799
+    then:
+      - output.turn_on: vext_enable
+      - lambda: delay(50);   // laisse l'alimentation de l'OLED se stabiliser avant son init
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+  hardware_uart: USB_SERIAL_JTAG
+
+# Les évènements vers HA (export CSV) exigent, côté HA, la case « Autoriser l'appareil à
+# effectuer des actions Home Assistant » (Paramètres > Appareils et services > ESPHome > ce
+# compteur > Configurer).
+api:
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: !secret fallback_hotspot_ssid
+    password: !secret fallback_hotspot_password
+captive_portal:
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time:
+      # Chaque heure pile : conso de l'heure écoulée et détection de fuite
+      - seconds: 0
+        minutes: 0
+        then:
+          - lambda: |-
+              double total = id(g_total);
+              if (total <= 0) return;
+              if (id(g_hour_start) <= 0) { id(g_hour_start) = total; return; }
+              double liters = (total - id(g_hour_start)) * 1000.0;
+              id(g_hour_start) = total;
+              id(conso_heure_l).publish_state(liters);
+              if (liters >= id(seuil_fuite_l).state) {
+                id(g_leak_hours)++;
+              } else {
+                id(g_leak_hours) = 0;
+                id(g_night_flag) = false;
+              }
+              int h = id(ha_time).now().hour;
+              if (h == 5 && id(g_leak_hours) >= 3) id(g_night_flag) = true;
+              id(heures_continues).publish_state(id(g_leak_hours));
+      # Chaque jour à minuit : conso d'hier, puis les « conso aujourd'hui » repartent à 0.
+      # Le « 1er index du jour » est mémorisé à la réception de la 1re trame de la nouvelle journée.
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        then:
+          - lambda: |-
+              auto now = id(ha_time).now();
+              if (!now.is_valid()) return;
+              // La veille = 1 h avant minuit (jour de l'année de la journée qui vient de se terminer)
+              int veille = ESPTime::from_epoch_local(now.timestamp - 3600).day_of_year;
+              if (id(g_day) == veille && id(g_total) > 0 && id(g_day_start) > 0)
+                id(conso_hier_l).publish_state((id(g_total) - id(g_day_start)) * 1000.0);
+              id(conso_jour_l).update();
+              id(v1_conso_jour).update();
+              id(v2_conso_jour).update();
+              id(v3_conso_jour).update();
+              id(v4_conso_jour).update();
+
+
+globals:
+  - id: g_total          # dernier index reçu (m³)
+    type: double
+    initial_value: '0'
+  - id: g_rx_ts          # heure de la dernière trame
+    type: uint32_t
+    initial_value: '0'
+  - id: g_flow_total     # point de référence du calcul de débit
+    type: double
+    initial_value: '0'
+  - id: g_flow_ts
+    type: uint32_t
+    initial_value: '0'
+  - id: g_hour_start     # index au début de l'heure courante
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: g_day_start      # 1er index reçu dans la journée (référence de la conso du jour)
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: g_day            # jour de l'année auquel correspond g_day_start
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+  - id: g_leak_hours     # heures consécutives avec conso
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: g_night_flag
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  - id: g_page           # page affichée sur l'OLED : 0 = index, 1 = signaux, 2 = alertes
+    type: int
+    initial_value: '0'
+
+  # ── Voisin 1 ──
+  - id: v1_total         # dernier index reçu (m³)
+    type: double
+    initial_value: '0'
+  - id: v1_day_start     # 1er index reçu dans la journée
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: v1_day           # jour de l'année auquel correspond v1_day_start
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+
+  # ── Voisin 2 ──
+  - id: v2_total
+    type: double
+    initial_value: '0'
+  - id: v2_day_start
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: v2_day
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+
+  # ── Voisin 3 ──
+  - id: v3_total
+    type: double
+    initial_value: '0'
+  - id: v3_day_start
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: v3_day
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+
+  # ── Voisin 4 ──
+  - id: v4_total
+    type: double
+    initial_value: '0'
+  - id: v4_day_start
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: v4_day
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+
+  # ── Export CSV ──
+  - id: g_id_off         # emplacement du n° de compteur dans l'en-tête des trames (4 ou 6), appris tout seul
+    type: int
+    restore_value: yes
+    initial_value: '4'
+  - id: g_csv_last       # n° de compteur → instant (s depuis le démarrage) du dernier évènement envoyé
+    type: std::map<uint32_t, uint32_t>
+  - id: g_ev_nom         # valeurs préparées pour l'évènement envoyé à HA
+    type: std::string
+    initial_value: '""'
+  - id: g_ev_index
+    type: std::string
+    initial_value: '""'
+  - id: g_ev_conso
+    type: std::string
+    initial_value: '""'
+
+# Vext (GPIO36, actif à l'état bas) : alimente l'OLED et l'étage RF
+output:
+  - platform: gpio
+    pin:
+      number: GPIO36
+      inverted: true
+    id: vext_enable
+
+external_components:
+  - source: github://SzczepanLeon/esphome-components@main
+    components: [wmbus_common, wmbus_radio, wmbus_meter]
+
+spi:
+  clk_pin: GPIO9
+  mosi_pin: GPIO10
+  miso_pin: GPIO11
+
+# Bus I2C de l'OLED intégré (SDA 17 / SCL 18). 400 kHz : rafraîchissement bien plus rapide
+i2c:
+  sda: GPIO17
+  scl: GPIO18
+  frequency: 400kHz
+  scan: false   # le scan se fait avant l'allumage de Vext : il ne verrait pas l'OLED
+
+wmbus_radio:
+  radio_type: SX1262
+  cs_pin: GPIO8
+  reset_pin: GPIO12
+  irq_pin: GPIO14
+  busy_pin: GPIO13
+  rx_gain: BOOSTED
+  rf_switch: true
+  has_tcxo: true
+  on_frame:
+    - then:
+        - logger.log:
+            format: "RSSI: %ddBm  %s"
+            args: [ frame->rssi(), frame->as_hex().c_str() ]
+
+        # ── Export CSV : n° de CHAQUE compteur entendu (connu ou inconnu) → script envoi_trame ──
+        - lambda: |-
+            if (!id(csv_actif).state) return;
+
+            // 1) Lecture de l'en-tête de la trame : L, C, M, M puis le champ « adresse » (6 octets)
+            std::string hex = frame->as_hex();
+            uint8_t d[10];
+            int n = 0, hi = -1;
+            for (char ch : hex) {
+              int v = (ch >= '0' && ch <= '9') ? ch - '0' :
+                      (ch >= 'a' && ch <= 'f') ? ch - 'a' + 10 :
+                      (ch >= 'A' && ch <= 'F') ? ch - 'A' + 10 : -1;
+              if (v < 0) continue;
+              if (hi < 0) { hi = v; continue; }
+              d[n++] = (uint8_t) ((hi << 4) | v);
+              hi = -1;
+              if (n == 10) break;
+            }
+            if (n < 10) return;
+
+            // 2) Deux emplacements possibles pour le n° de compteur (octets 4-7 ou 6-9, petit-boutiste)
+            uint32_t id_a = (uint32_t) d[4] | ((uint32_t) d[5] << 8) | ((uint32_t) d[6] << 16) | ((uint32_t) d[7] << 24);
+            uint32_t id_b = (uint32_t) d[6] | ((uint32_t) d[7] << 8) | ((uint32_t) d[8] << 16) | ((uint32_t) d[9] << 24);
+
+            // 3) Compteur connu ? (le tien = case 0, voisins = cases 1 à 4). Un compteur connu qui
+            //    retombe sur l'un des deux emplacements fixe celui à utiliser pour les inconnus.
+            const uint32_t connus[5] = {
+              (uint32_t) strtoul("${num_compteur}", nullptr, 16),
+              (uint32_t) strtoul("${num_v1}", nullptr, 16),
+              (uint32_t) strtoul("${num_v2}", nullptr, 16),
+              (uint32_t) strtoul("${num_v3}", nullptr, 16),
+              (uint32_t) strtoul("${num_v4}", nullptr, 16)
+            };
+            int slot = -1;
+            uint32_t idn = 0;
+            for (int i = 0; i < 5 && slot < 0; i++) {
+              if (connus[i] == id_a) { slot = i; idn = id_a; id(g_id_off) = 4; }
+              else if (connus[i] == id_b) { slot = i; idn = id_b; id(g_id_off) = 6; }
+            }
+            if (slot < 0) idn = (id(g_id_off) == 6) ? id_b : id_a;
+
+            // 4) Une ligne au maximum par compteur et par intervalle (nombre « Export CSV - intervalle »)
+            uint32_t maintenant = millis() / 1000;
+            uint32_t pause = (uint32_t) id(csv_intervalle_min).state * 60;
+            auto &dernier = id(g_csv_last);
+            auto it = dernier.find(idn);
+            if (it != dernier.end() && (maintenant - it->second) < pause) return;
+            if (it == dernier.end() && dernier.size() >= 64) dernier.clear();   // garde-fou mémoire
+            dernier[idn] = maintenant;
+
+            // 5) Envoi (le script attend 2 s que wmbus_meter ait décodé l'index des compteurs connus)
+            char buf[9];
+            snprintf(buf, sizeof(buf), "%08X", (unsigned int) idn);
+            int rssi = (int) frame->rssi();
+            ESP_LOGD("csv", "Compteur %s (%s) RSSI %d dBm | en-tete %02X%02X%02X%02X %02X%02X%02X%02X%02X%02X",
+                     buf, slot >= 0 ? "connu" : "inconnu", rssi,
+                     d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9]);
+            id(envoi_trame).execute(std::string(buf), rssi, slot);
+
+# Ton compteur (compteur0) puis les quatre voisins. Si un voisin a un autre modèle de compteur,
+# change son « type ».
+# NB : meter_id doit être un nombre précis (pas de joker) : ESPHome ne peut donc décoder l'index
+# QUE des compteurs déclarés ici. Les autres compteurs ne remontent que leur n° et leur RSSI.
+wmbus_meter:
+  - id: mon_compteur
+    meter_id: ${num_compteur}
+    type: dme_07
+    mode: [T1]
+  - id: compteur_v1
+    meter_id: ${num_v1}
+    type: dme_07
+    mode: [T1]
+  - id: compteur_v2
+    meter_id: ${num_v2}
+    type: dme_07
+    mode: [T1]
+  - id: compteur_v3
+    meter_id: ${num_v3}
+    type: dme_07
+    mode: [T1]
+  - id: compteur_v4
+    meter_id: ${num_v4}
+    type: dme_07
+    mode: [T1]
+
+# ───────────────────────── Envoi d'un évènement vers Home Assistant ─────────────────────────
+script:
+  - id: envoi_trame
+    mode: parallel
+    parameters:
+      p_id: string      # n° de compteur (8 chiffres hexadécimaux)
+      p_rssi: int       # RSSI de la trame (dBm)
+      p_slot: int       # -1 = inconnu, 0 = mon compteur, 1 à 4 = voisins
+    then:
+      - delay: 2s       # laisse wmbus_meter décoder la trame et mettre l'index à jour
+      - lambda: |-
+          auto now = id(ha_time).now();
+          // Conso du jour = index courant − 1er index reçu aujourd'hui ; 0 par défaut
+          auto conso_l = [&](int jour, double total, double debut) -> double {
+            if (!now.is_valid() || jour != now.day_of_year || total <= 0 || debut <= 0) return 0.0;
+            return (total - debut) * 1000.0;
+          };
+          const char *nom = "";
+          double total = 0, conso = 0;
+          switch (p_slot) {
+            case 0: nom = "${nom_moi}"; total = id(g_total);  conso = conso_l(id(g_day),  id(g_total),  id(g_day_start));  break;
+            case 1: nom = "${nom_v1}";  total = id(v1_total); conso = conso_l(id(v1_day), id(v1_total), id(v1_day_start)); break;
+            case 2: nom = "${nom_v2}";  total = id(v2_total); conso = conso_l(id(v2_day), id(v2_total), id(v2_day_start)); break;
+            case 3: nom = "${nom_v3}";  total = id(v3_total); conso = conso_l(id(v3_day), id(v3_total), id(v3_day_start)); break;
+            case 4: nom = "${nom_v4}";  total = id(v4_total); conso = conso_l(id(v4_day), id(v4_total), id(v4_day_start)); break;
+            default: break;
+          }
+          id(g_ev_nom) = nom;
+          if (p_slot >= 0) {
+            char b[16];
+            snprintf(b, sizeof(b), "%.3f", total);
+            id(g_ev_index) = b;
+            snprintf(b, sizeof(b), "%.0f", conso);
+            id(g_ev_conso) = b;
+          } else {
+            // compteur inconnu : ESPHome ne sait pas décoder son index
+            id(g_ev_index) = "";
+            id(g_ev_conso) = "";
+          }
+      - homeassistant.event:
+          event: esphome.wmbus_trame
+          data:
+            compteur: !lambda 'return p_id;'
+            nom: !lambda 'return id(g_ev_nom);'
+            statut: !lambda 'return p_slot >= 0 ? "connu" : "inconnu";'
+            rssi_dbm: !lambda 'return std::to_string(p_rssi);'
+            index_m3: !lambda 'return id(g_ev_index);'
+            conso_jour_l: !lambda 'return id(g_ev_conso);'
+
+
+sensor:
+  - platform: wmbus_meter
+    parent_id: mon_compteur
+    field: total_m3
+    id: eau_total
+    name: "Compteur eau - Volume total"
+    device_class: water
+    state_class: total_increasing
+    accuracy_decimals: 3
+    on_value:
+      then:
+        - lambda: |-
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) return;
+            uint32_t ts = (uint32_t) now.timestamp;
+            double total = x;
+            id(g_total) = total;
+            id(g_rx_ts) = ts;
+            // 1er index du jour : 1re trame reçue aujourd'hui (ou index revenu en arrière = compteur remplacé)
+            if (id(g_day) != now.day_of_year || id(g_day_start) <= 0 || total < id(g_day_start)) {
+              id(g_day_start) = total;
+              id(g_day) = now.day_of_year;
+            }
+            id(conso_jour_l).update();
+            if (id(g_flow_ts) == 0 || total < id(g_flow_total)) {
+              id(g_flow_total) = total; id(g_flow_ts) = ts; return;
+            }
+            uint32_t dt = ts - id(g_flow_ts);
+            if (dt < 120) return;   // trames trop proches : résolution de 1 L
+            id(debit_l_h).publish_state((total - id(g_flow_total)) * 1000.0 / (dt / 3600.0));
+            id(g_flow_total) = total;
+            id(g_flow_ts) = ts;
+
+  - platform: wmbus_meter
+    parent_id: mon_compteur
+    field: rssi_dbm
+    id: eau_rssi
+    name: "Compteur eau - RSSI"
+    device_class: signal_strength
+    state_class: measurement
+    entity_category: diagnostic
+
+  - platform: wifi_signal
+    id: wifi_rssi
+    name: "WiFi RSSI"
+    update_interval: 30s
+    entity_category: diagnostic
+  - platform: template
+    id: debit_l_h
+    name: "Débit estimé"
+    unit_of_measurement: "L/h"
+    accuracy_decimals: 0
+    state_class: measurement
+  - platform: template
+    id: conso_heure_l
+    name: "Conso dernière heure"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    state_class: measurement
+  - platform: template
+    id: conso_hier_l
+    name: "Conso hier"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+  - platform: template
+    id: heures_continues
+    name: "Heures de conso continue"
+    unit_of_measurement: "h"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+  - platform: template
+    id: conso_jour_l
+    name: "Conso aujourd'hui"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      // Conso du jour = index courant − 1er index reçu aujourd'hui ; 0 par défaut
+      // (au démarrage, après minuit, ou tant qu'aucune trame du jour n'est arrivée)
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(g_day) != now.day_of_year || id(g_total) <= 0 || id(g_day_start) <= 0)
+        return 0.0f;
+      return (float) ((id(g_total) - id(g_day_start)) * 1000.0);
+
+  # ── Voisin 1 : index + RSSI + conso du jour (visibles dans Home Assistant) ──
+  - platform: wmbus_meter
+    parent_id: compteur_v1
+    field: total_m3
+    id: v1_index
+    name: "${nom_v1} - Index"
+    device_class: water
+    state_class: total_increasing
+    accuracy_decimals: 3
+    on_value:
+      then:
+        - lambda: |-
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) return;
+            double total = x;
+            // 1er index du jour : 1re trame reçue aujourd'hui
+            if (id(v1_day) != now.day_of_year || id(v1_day_start) <= 0 || total < id(v1_day_start)) {
+              id(v1_day_start) = total;
+              id(v1_day) = now.day_of_year;
+            }
+            id(v1_total) = total;
+            id(v1_conso_jour).update();
+  - platform: wmbus_meter
+    parent_id: compteur_v1
+    field: rssi_dbm
+    id: v1_rssi
+    name: "${nom_v1} - RSSI"
+    device_class: signal_strength
+    state_class: measurement
+    entity_category: diagnostic
+  - platform: template
+    id: v1_conso_jour
+    name: "${nom_v1} - Conso aujourd'hui"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(v1_day) != now.day_of_year || id(v1_total) <= 0 || id(v1_day_start) <= 0)
+        return 0.0f;
+      return (float) ((id(v1_total) - id(v1_day_start)) * 1000.0);
+
+  # ── Voisin 2 : index + RSSI + conso du jour (visibles dans Home Assistant) ──
+  - platform: wmbus_meter
+    parent_id: compteur_v2
+    field: total_m3
+    id: v2_index
+    name: "${nom_v2} - Index"
+    device_class: water
+    state_class: total_increasing
+    accuracy_decimals: 3
+    on_value:
+      then:
+        - lambda: |-
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) return;
+            double total = x;
+            if (id(v2_day) != now.day_of_year || id(v2_day_start) <= 0 || total < id(v2_day_start)) {
+              id(v2_day_start) = total;
+              id(v2_day) = now.day_of_year;
+            }
+            id(v2_total) = total;
+            id(v2_conso_jour).update();
+  - platform: wmbus_meter
+    parent_id: compteur_v2
+    field: rssi_dbm
+    id: v2_rssi
+    name: "${nom_v2} - RSSI"
+    device_class: signal_strength
+    state_class: measurement
+    entity_category: diagnostic
+  - platform: template
+    id: v2_conso_jour
+    name: "${nom_v2} - Conso aujourd'hui"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(v2_day) != now.day_of_year || id(v2_total) <= 0 || id(v2_day_start) <= 0)
+        return 0.0f;
+      return (float) ((id(v2_total) - id(v2_day_start)) * 1000.0);
+
+  # ── Voisin 3 : index + RSSI + conso du jour (visibles dans Home Assistant) ──
+  - platform: wmbus_meter
+    parent_id: compteur_v3
+    field: total_m3
+    id: v3_index
+    name: "${nom_v3} - Index"
+    device_class: water
+    state_class: total_increasing
+    accuracy_decimals: 3
+    on_value:
+      then:
+        - lambda: |-
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) return;
+            double total = x;
+            if (id(v3_day) != now.day_of_year || id(v3_day_start) <= 0 || total < id(v3_day_start)) {
+              id(v3_day_start) = total;
+              id(v3_day) = now.day_of_year;
+            }
+            id(v3_total) = total;
+            id(v3_conso_jour).update();
+  - platform: wmbus_meter
+    parent_id: compteur_v3
+    field: rssi_dbm
+    id: v3_rssi
+    name: "${nom_v3} - RSSI"
+    device_class: signal_strength
+    state_class: measurement
+    entity_category: diagnostic
+  - platform: template
+    id: v3_conso_jour
+    name: "${nom_v3} - Conso aujourd'hui"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(v3_day) != now.day_of_year || id(v3_total) <= 0 || id(v3_day_start) <= 0)
+        return 0.0f;
+      return (float) ((id(v3_total) - id(v3_day_start)) * 1000.0);
+
+  # ── Voisin 4 : index + RSSI + conso du jour (visibles dans Home Assistant) ──
+  - platform: wmbus_meter
+    parent_id: compteur_v4
+    field: total_m3
+    id: v4_index
+    name: "${nom_v4} - Index"
+    device_class: water
+    state_class: total_increasing
+    accuracy_decimals: 3
+    on_value:
+      then:
+        - lambda: |-
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) return;
+            double total = x;
+            if (id(v4_day) != now.day_of_year || id(v4_day_start) <= 0 || total < id(v4_day_start)) {
+              id(v4_day_start) = total;
+              id(v4_day) = now.day_of_year;
+            }
+            id(v4_total) = total;
+            id(v4_conso_jour).update();
+  - platform: wmbus_meter
+    parent_id: compteur_v4
+    field: rssi_dbm
+    id: v4_rssi
+    name: "${nom_v4} - RSSI"
+    device_class: signal_strength
+    state_class: measurement
+    entity_category: diagnostic
+  - platform: template
+    id: v4_conso_jour
+    name: "${nom_v4} - Conso aujourd'hui"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(v4_day) != now.day_of_year || id(v4_total) <= 0 || id(v4_day_start) <= 0)
+        return 0.0f;
+      return (float) ((id(v4_total) - id(v4_day_start)) * 1000.0);
+
+text_sensor:
+  - platform: wmbus_meter
+    parent_id: mon_compteur
+    field: status
+    name: "Compteur eau - Statut"
+    entity_category: diagnostic
+
+number:
+  - platform: template
+    id: seuil_fuite_l
+    name: "Fuite - conso min par heure"
+    optimistic: true
+    restore_value: true
+    initial_value: 1
+    min_value: 1
+    max_value: 50
+    step: 1
+    mode: box
+    unit_of_measurement: "L"
+    entity_category: config
+  - platform: template
+    id: seuil_fuite_heures
+    name: "Fuite - heures consécutives"
+    optimistic: true
+    restore_value: true
+    initial_value: 24
+    min_value: 3
+    max_value: 72
+    step: 1
+    mode: box
+    unit_of_measurement: "h"
+    entity_category: config
+  - platform: template
+    id: seuil_debit_l_h
+    name: "Seuil débit anormal"
+    optimistic: true
+    restore_value: true
+    initial_value: 1000
+    min_value: 100
+    max_value: 5000
+    step: 100
+    mode: box
+    unit_of_measurement: "L/h"
+    entity_category: config
+  - platform: template
+    id: seuil_jour_l
+    name: "Seuil conso journalière"
+    optimistic: true
+    restore_value: true
+    initial_value: 800
+    min_value: 100
+    max_value: 5000
+    step: 50
+    mode: box
+    unit_of_measurement: "L"
+    entity_category: config
+  - platform: template
+    id: csv_intervalle_min
+    name: "Export CSV - intervalle"
+    optimistic: true
+    restore_value: true
+    initial_value: 15
+    min_value: 1
+    max_value: 1440
+    step: 1
+    mode: box
+    unit_of_measurement: "min"
+    entity_category: config
+
+switch:
+  - platform: template
+    id: mode_absence
+    name: "Mode absence"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template
+    id: csv_actif
+    name: "Export CSV actif"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+
+binary_sensor:
+  - platform: template
+    id: bs_fuite_confirmee
+    name: "Fuite confirmée"
+    device_class: problem
+    lambda: |-
+      return id(g_leak_hours) >= (int) id(seuil_fuite_heures).state;
+  - platform: template
+    id: bs_fuite_nuit
+    name: "Fuite suspectée (nuit)"
+    device_class: problem
+    lambda: |-
+      return id(g_night_flag);
+  - platform: template
+    id: bs_debit_anormal
+    name: "Débit anormal"
+    device_class: problem
+    lambda: |-
+      if (!id(debit_l_h).has_state()) return false;
+      return id(debit_l_h).state > id(seuil_debit_l_h).state;
+    filters:
+      - delayed_on: 10min
+  - platform: template
+    id: bs_conso_jour
+    name: "Conso journalière anormale"
+    device_class: problem
+    lambda: |-
+      if (!id(conso_jour_l).has_state()) return false;
+      return id(conso_jour_l).state > id(seuil_jour_l).state;
+  - platform: template
+    id: bs_absence
+    name: "Conso pendant absence"
+    device_class: problem
+    lambda: |-
+      if (!id(mode_absence).state || !id(conso_heure_l).has_state()) return false;
+      return id(conso_heure_l).state >= 1;
+  - platform: template
+    id: bs_silencieux
+    name: "Compteur silencieux"
+    device_class: problem
+    entity_category: diagnostic
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(g_rx_ts) == 0) return false;
+      return ((uint32_t) now.timestamp - id(g_rx_ts)) > 6 * 3600;
+
+# ───────────────────────── Écran OLED (SSD1306 128x64 de la carte) ─────────────────────────
+
+font:
+  # Texte
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 700
+    id: f_big            # index du compteur
+    size: 22
+    glyphs: &glyphes_texte '!"#%()+,-./0123456789:?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz°³éèêàâùûôîçÉ '
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 700
+    id: f_mid            # conso du jour, dBm
+    size: 18
+    glyphs: *glyphes_texte
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 700
+    id: f_hdr            # titre de l'écran alertes
+    size: 14
+    glyphs: *glyphes_texte
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 500
+    id: f_small          # n° de compteur, unités, libellés d'alertes
+    size: 12
+    glyphs: *glyphes_texte
+
+  # Pictogrammes (Material Design Icons)
+  - file: ${mdi_url}
+    id: f_icon_l
+    size: 26
+    glyphs:
+      - "\U000F058C"     # water (goutte)
+      - "\U000F05A9"     # wifi
+      - "\U000F043B"     # radio-tower (compteur Izar / DME)
+  - file: ${mdi_url}
+    id: f_icon_m
+    size: 18
+    glyphs:
+      - "\U000F00F6"     # calendar-today (conso du jour)
+      - "\U000F0026"     # alert (titre alertes)
+  - file: ${mdi_url}
+    id: f_icon_s
+    size: 14
+    glyphs:
+      - "\U000F0423"     # pound (n° de compteur)
+      - "\U000F0889"     # pipe-leak (fuite confirmée)
+      - "\U000F0594"     # weather-night (fuite de nuit)
+      - "\U000F04C5"     # speedometer (débit anormal)
+      - "\U000F0A31"     # calendar-alert (conso journalière)
+      - "\U000F087B"     # home-alert (conso pendant absence)
+      - "\U000F0783"     # signal-off (compteur silencieux)
+
+# Rotation des pages toutes les 5 s ; la page « alertes » est sautée s'il n'y a aucune alerte
+interval:
+  - interval: 5s
+    then:
+      - lambda: |-
+          bool alerte = id(bs_fuite_confirmee).state || id(bs_fuite_nuit).state ||
+                        id(bs_debit_anormal).state || id(bs_conso_jour).state ||
+                        id(bs_absence).state || id(bs_silencieux).state;
+          int suivante = (id(g_page) + 1) % 3;
+          if (suivante == 2 && !alerte) suivante = 0;
+          id(g_page) = suivante;
+          id(oled).update();
+
+display:
+  - platform: ssd1306_i2c
+    id: oled
+    model: "SSD1306 128x64"
+    address: 0x3C
+    reset_pin: GPIO21
+    update_interval: 2s
+    lambda: |-
+      // ── Alertes actives ──
+      struct Alerte { const char *icone; const char *libelle; bool active; };
+      Alerte alertes[] = {
+        {"\U000F0889", "Fuite confirmée",   id(bs_fuite_confirmee).state},
+        {"\U000F0594", "Fuite de nuit",     id(bs_fuite_nuit).state},
+        {"\U000F04C5", "Débit anormal",     id(bs_debit_anormal).state},
+        {"\U000F0A31", "Conso jour élevée", id(bs_conso_jour).state},
+        {"\U000F087B", "Conso en absence",  id(bs_absence).state},
+        {"\U000F0783", "Compteur muet",     id(bs_silencieux).state},
+      };
+      int nb_alertes = 0;
+      for (auto &a : alertes) if (a.active) nb_alertes++;
+
+      int page = id(g_page);
+      if (page == 2 && nb_alertes == 0) page = 0;
+
+      // ── Barres de signal (4 niveaux) : pleines = niveau atteint, contour = vide ──
+      auto barres = [&](int x, int yb, int niveau) {
+        for (int i = 0; i < 4; i++) {
+          int h = 7 + i * 5;
+          int xx = x + i * 7;
+          if (i < niveau) it.filled_rectangle(xx, yb - h + 1, 5, h);
+          else it.rectangle(xx, yb - h + 1, 5, h);
+        }
+      };
+      // Seuils (dBm) : à ajuster selon vos goûts
+      auto niv_wifi = [](float d) { return std::isnan(d) ? 0 : d >= -55 ? 4 : d >= -67 ? 3 : d >= -75 ? 2 : d >= -85 ? 1 : 0; };
+      auto niv_rf   = [](float d) { return std::isnan(d) ? 0 : d >= -60 ? 4 : d >= -75 ? 3 : d >= -90 ? 2 : d >= -100 ? 1 : 0; };
+
+      if (page == 0) {
+        // ═══ Écran 1 : index / conso du jour / n° de compteur ═══
+        it.print(0, 13, id(f_icon_l), TextAlign::CENTER_LEFT, "\U000F058C");
+        auto f_index = id(g_total) >= 1000 ? id(f_mid) : id(f_big);   // 4 chiffres avant la virgule : police réduite
+        if (id(g_total) > 0)
+          it.printf(26, 23, f_index, TextAlign::BASELINE_LEFT, "%.3f", id(g_total));
+        else
+          it.print(26, 23, f_index, TextAlign::BASELINE_LEFT, "---.---");
+        it.print(127, 23, id(f_small), TextAlign::BASELINE_RIGHT, "m³");
+
+        it.horizontal_line(0, 28, 128);
+
+        // Conso du jour = index courant − 1er index reçu aujourd'hui ; 0 L par défaut.
+        // Calculée ici à partir des variables internes (pas besoin d'attendre le capteur).
+        float conso_l = 0;
+        {
+          auto maintenant = id(ha_time).now();
+          if (maintenant.is_valid() && id(g_day) == maintenant.day_of_year && id(g_total) > 0 && id(g_day_start) > 0)
+            conso_l = (id(g_total) - id(g_day_start)) * 1000.0;
+        }
+        it.print(0, 40, id(f_icon_m), TextAlign::CENTER_LEFT, "\U000F00F6");
+        it.printf(26, 46, id(f_mid), TextAlign::BASELINE_LEFT, "%.0f L", conso_l);
+
+        it.print(0, 57, id(f_icon_s), TextAlign::CENTER_LEFT, "\U000F0423");
+        // + 2 : saute le préfixe « 0x » du secret
+        it.print(16, 62, id(f_small), TextAlign::BASELINE_LEFT, "${num_compteur}" + 2);
+
+      } else if (page == 1) {
+        // ═══ Écran 2 : puissance des signaux WiFi et Izar/DME ═══
+        float rssi_wifi = id(wifi_rssi).state;
+        float rssi_rf = id(eau_rssi).state;
+
+        it.print(0, 16, id(f_icon_l), TextAlign::CENTER_LEFT, "\U000F05A9");
+        barres(34, 28, niv_wifi(rssi_wifi));
+        if (!std::isnan(rssi_wifi)) {
+          it.printf(99, 24, id(f_mid), TextAlign::BASELINE_RIGHT, "%.0f", rssi_wifi);
+          it.print(102, 24, id(f_small), TextAlign::BASELINE_LEFT, "dBm");
+        } else {
+          it.print(99, 24, id(f_mid), TextAlign::BASELINE_RIGHT, "--");
+        }
+
+        it.horizontal_line(0, 32, 128);
+
+        it.print(0, 48, id(f_icon_l), TextAlign::CENTER_LEFT, "\U000F043B");
+        barres(34, 60, niv_rf(rssi_rf));
+        if (!std::isnan(rssi_rf)) {
+          it.printf(99, 56, id(f_mid), TextAlign::BASELINE_RIGHT, "%.0f", rssi_rf);
+          it.print(102, 56, id(f_small), TextAlign::BASELINE_LEFT, "dBm");
+        } else {
+          it.print(99, 56, id(f_mid), TextAlign::BASELINE_RIGHT, "--");
+        }
+
+      } else {
+        // ═══ Écran 3 : alertes actives ═══
+        it.print(0, 8, id(f_icon_m), TextAlign::CENTER_LEFT, "\U000F0026");
+        it.print(24, 13, id(f_hdr), TextAlign::BASELINE_LEFT, "ALERTE");
+        it.printf(127, 13, id(f_hdr), TextAlign::BASELINE_RIGHT, "%d", nb_alertes);
+
+        it.horizontal_line(0, 16, 128);
+
+        int max_lignes = nb_alertes > 4 ? 3 : 4;   // 4e ligne = « +N autres » si trop d'alertes
+        int ligne = 0;
+        for (auto &a : alertes) {
+          if (!a.active || ligne >= max_lignes) continue;
+          int y = 23 + ligne * 11;
+          it.print(0, y, id(f_icon_s), TextAlign::CENTER_LEFT, a.icone);
+          it.print(20, y, id(f_small), TextAlign::CENTER_LEFT, a.libelle);
+          ligne++;
+        }
+        if (nb_alertes > ligne)
+          it.printf(20, 23 + ligne * 11, id(f_small), TextAlign::CENTER_LEFT, "+%d autres", nb_alertes - ligne);
+      }

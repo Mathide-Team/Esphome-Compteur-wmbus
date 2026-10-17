@@ -1,0 +1,59 @@
+# Home Assistant : écrit une ligne CSV à chaque événement « esphome.wmbus_frame » envoyé par l'ESP
+# (1 événement max toutes les 5 min par compteur, connus ET inconnus).
+#
+# À coller dans automations.yaml
+# (ou : Paramètres > Automatisations > Créer > ⋮ > Modifier en YAML).
+#
+# À ADAPTER avant de l'utiliser :
+#   1. la table « compteurs » : les numéros (sans le 0x) et les identifiants d'entités de TES compteurs.
+#      Un compteur absent de la table est écrit avec le statut « inconnu » (index et conso vides).
+#   2. l'entité notify (celle créée par l'intégration File, voir README).
+#
+# Colonnes : timestamp;compteur;statut;rssi_dbm;index_m3;conso_jour_l  (séparateur « ; », décimale « , »)
+- alias: "Compteurs eau - ligne CSV"
+  id: compteurs_eau_csv
+  description: "Ajoute une ligne au CSV des relevés (compteurs connus et inconnus)"
+  mode: queued
+  max: 50
+  triggers:
+    - trigger: event
+      event_type: esphome.wmbus_frame
+  variables:
+    compteurs:
+      "12345678":                       # TON compteur (numéro sans le 0x)
+        index: sensor.compteur_eau_lora_compteur_eau_volume_total
+        conso: sensor.compteur_eau_lora_conso_aujourd_hui
+      "23456789":                       # voisin 1 (nom = secret nomcompteur1)
+        index: sensor.compteur_eau_lora_dupont_index
+        conso: sensor.compteur_eau_lora_dupont_conso_aujourd_hui
+      "34567890":                       # voisin 2
+        index: sensor.compteur_eau_lora_martin_index
+        conso: sensor.compteur_eau_lora_martin_conso_aujourd_hui
+      # ... voisins 3 et 4 : même schéma
+  actions:
+    # laisse les capteurs de l'ESP se mettre à jour après la trame
+    - delay: "00:00:02"
+    - variables:
+        ligne: >-
+          {%- set cid = trigger.event.data.compteur | upper | string -%}
+          {%- set e = compteurs.get(cid) -%}
+          {%- set idx = states(e['index']) if e else '' -%}
+          {%- set cj = states(e['conso']) if e else '' -%}
+          {{ as_local(trigger.event.time_fired).strftime('%Y-%m-%d %H:%M:%S') }};
+          {{- cid }};{{ 'connu' if e else 'inconnu' }};{{ trigger.event.data.rssi }};
+          {{- (idx | replace('.', ',')) if is_number(idx) else '' }};
+          {{- (cj | float | round(0) | int) if is_number(cj) else '' }}
+    - action: notify.send_message
+      target:
+        entity_id: notify.releves_compteurs
+      data:
+        message: "{{ ligne }}"
+    # ── Extension possible : prévenir un voisin ──────────────────────────────────
+    # Même principe avec un autre « notify », par exemple MQTT avec un topic par compteur
+    # (nécessite l'intégration MQTT ; chaque voisin ne doit voir QUE son compteur) :
+    # - action: mqtt.publish
+    #   data:
+    #     topic: "compteurs_eau/{{ trigger.event.data.compteur | upper }}/releve"
+    #     payload: "{{ ligne }}"
+    #     retain: true
+    # Autres pistes : notify.mobile_app_<téléphone>, Telegram, e-mail...

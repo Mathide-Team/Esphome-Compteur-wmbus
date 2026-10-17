@@ -1,0 +1,4 @@
+secrets.yaml
+*.log
+releves*.csv
+.esphome/

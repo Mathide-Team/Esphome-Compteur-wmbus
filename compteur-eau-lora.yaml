@@ -406,17 +406,23 @@ sensor:
     on_value:
       then:
         - lambda: |-
-            auto now = id(ha_time).now();
-            if (!now.is_valid()) return;
-            uint32_t ts = (uint32_t) now.timestamp;
             double total = x;
-            id(g_total) = total;
+            id(g_total) = total;   // mémorisé tout de suite : l'écran affiche l'index même sans l'heure
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) {
+              ESP_LOGW("conso", "Heure non synchronisée avec HA : conso du jour non calculée (0 L)");
+              return;
+            }
+            uint32_t ts = (uint32_t) now.timestamp;
             id(g_rx_ts) = ts;
             // 1er index du jour : 1re trame reçue aujourd'hui (ou index revenu en arrière = compteur remplacé)
             if (id(g_day) != now.day_of_year || id(g_day_start) <= 0 || total < id(g_day_start)) {
               id(g_day_start) = total;
               id(g_day) = now.day_of_year;
+              ESP_LOGI("conso", "1er index du jour (jour %d) : %.3f m3", now.day_of_year, total);
             }
+            ESP_LOGD("conso", "Conso du jour : %.0f L (index %.3f - 1er index %.3f)",
+                     (total - id(g_day_start)) * 1000.0, total, id(g_day_start));
             id(conso_jour_l).update();
             if (id(g_flow_ts) == 0 || total < id(g_flow_total)) {
               id(g_flow_total) = total; id(g_flow_ts) = ts; return;
@@ -493,15 +499,15 @@ sensor:
     on_value:
       then:
         - lambda: |-
+            double total = x;
+            id(v1_total) = total;   // mémorisé même si l'heure n'est pas encore connue
             auto now = id(ha_time).now();
             if (!now.is_valid()) return;
-            double total = x;
             // 1er index du jour : 1re trame reçue aujourd'hui
             if (id(v1_day) != now.day_of_year || id(v1_day_start) <= 0 || total < id(v1_day_start)) {
               id(v1_day_start) = total;
               id(v1_day) = now.day_of_year;
             }
-            id(v1_total) = total;
             id(v1_conso_jour).update();
   - platform: wmbus_meter
     parent_id: compteur_v1
@@ -538,14 +544,14 @@ sensor:
     on_value:
       then:
         - lambda: |-
+            double total = x;
+            id(v2_total) = total;   // mémorisé même si l'heure n'est pas encore connue
             auto now = id(ha_time).now();
             if (!now.is_valid()) return;
-            double total = x;
             if (id(v2_day) != now.day_of_year || id(v2_day_start) <= 0 || total < id(v2_day_start)) {
               id(v2_day_start) = total;
               id(v2_day) = now.day_of_year;
             }
-            id(v2_total) = total;
             id(v2_conso_jour).update();
   - platform: wmbus_meter
     parent_id: compteur_v2
@@ -582,14 +588,14 @@ sensor:
     on_value:
       then:
         - lambda: |-
+            double total = x;
+            id(v3_total) = total;   // mémorisé même si l'heure n'est pas encore connue
             auto now = id(ha_time).now();
             if (!now.is_valid()) return;
-            double total = x;
             if (id(v3_day) != now.day_of_year || id(v3_day_start) <= 0 || total < id(v3_day_start)) {
               id(v3_day_start) = total;
               id(v3_day) = now.day_of_year;
             }
-            id(v3_total) = total;
             id(v3_conso_jour).update();
   - platform: wmbus_meter
     parent_id: compteur_v3
@@ -626,14 +632,14 @@ sensor:
     on_value:
       then:
         - lambda: |-
+            double total = x;
+            id(v4_total) = total;   // mémorisé même si l'heure n'est pas encore connue
             auto now = id(ha_time).now();
             if (!now.is_valid()) return;
-            double total = x;
             if (id(v4_day) != now.day_of_year || id(v4_day_start) <= 0 || total < id(v4_day_start)) {
               id(v4_day_start) = total;
               id(v4_day) = now.day_of_year;
             }
-            id(v4_total) = total;
             id(v4_conso_jour).update();
   - platform: wmbus_meter
     parent_id: compteur_v4

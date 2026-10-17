@@ -36,11 +36,14 @@ La coque est vendue pour la V3 de la carte, mais elle est **100 % compatible ave
 
 | Fichier | Rôle |
 |---|---|
-| `compteur-eau-lora.yaml` | Configuration ESPHome complète (ton compteur + 4 voisins + écran) |
+| `compteur-eau-lora.yaml` | Configuration ESPHome complète (ton compteur + écran + liste des voisins) |
+| `voisins/voisin.yaml` | Modèle d'un compteur voisin, inclus une fois par voisin (0 à 10), voir [Voisins](#voisins--de-0-à-10) |
 | `secrets.example.yaml` | Modèle du `secrets.yaml` (à copier et remplir, ne jamais publier le vrai) |
 | `ha_automation_releves_csv.yaml` | Automatisation Home Assistant qui écrit le CSV (à coller dans l'éditeur d'automatisations) |
 | `docs/export-csv-home-assistant.md` | Tutoriel de l'export CSV dans Home Assistant |
-| `ha_dashboard_compteur_eau.yaml` | Tableau de bord Home Assistant « Compteur d'eau » |
+| `ha_dashboard_compteur_eau.yaml` | Tableau de bord Home Assistant « Compteur d'eau » (vue de base) |
+| `scripts/generer_tableau_de_bord.py` | Génère le tableau de bord complet, avec une vue « Voisins » pour les voisins déclarés |
+| `scripts/ci_voisins.py` | CI : variante de la configuration avec 0 à 10 voisins de test |
 | `LICENSE` | Licence MIT |
 | `.github/` | CI, garde `dev` → `main`, règles de protection versionnées |
 
@@ -53,10 +56,10 @@ Copie `secrets.example.yaml` en `secrets.yaml` et remplis-le. Les numéros de co
 | Clé | Contenu |
 |---|---|
 | `compteur0` | numéro de **ton** compteur |
-| `compteur1` … `compteur4` | numéros des compteurs voisins |
-| `nomcompteur1` … `nomcompteur4` | noms affichés dans HA (ex. `"Dupont"`) |
+| `compteur1` … `compteurN` | numéros des compteurs voisins (un par voisin déclaré, jusqu'à 10) |
+| `nomcompteur1` … `nomcompteurN` | noms affichés dans HA (ex. `"Dupont"`) |
 
-Pour avoir moins de 4 voisins, voir [Adapter la configuration](#adapter-la-configuration). Si un voisin a un autre modèle de compteur, change son `type` dans `wmbus_meter`.
+La configuration fournie déclare 4 voisins. Pour en ajouter, en retirer ou changer le modèle d'un compteur voisin, voir [Voisins](#voisins--de-0-à-10).
 
 ### 2. Premier flash (par USB)
 
@@ -159,14 +162,13 @@ Cette section suit `compteur-eau-lora.yaml` bloc par bloc, dans l'ordre du fichi
 ```yaml
 num_compteur: !secret compteur0
 nom_moi: "Mon compteur"
-num_v1: !secret compteur1
-nom_v1: !secret nomcompteur1
+nom_v1: !secret nomcompteur1     # compatibilité paquet ntfy (voisins 1 à 4)
 ...
 mdi_url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/..."
 ```
 
-- `${num_compteur}`, `${num_v1}`… `${num_v4}` : numéros des compteurs, lus dans `secrets.yaml`. ESPHome les remplace partout dans le fichier : `meter_id` de `wmbus_meter`, liste des compteurs connus dans `on_frame`, numéro affiché à l'écran.
-- `${nom_v1}`… : noms des voisins. Ils servent à nommer les entités HA (« Dupont - Index »…) et la colonne `nom` de l'événement CSV.
+- `${num_compteur}` : numéro de ton compteur, lu dans `secrets.yaml`. ESPHome le remplace partout dans le fichier : `meter_id` de `wmbus_meter`, reconnaissance de ton compteur dans `on_frame`, numéro affiché à l'écran.
+- `${nom_v1}`… `${nom_v4}` : gardés seulement pour le paquet ntfy actuel, qui envoie les bilans des voisins 1 à 4. Les voisins eux-mêmes sont déclarés dans `packages:` (voir [Voisins](#voisins--de-0-à-10)).
 - `nom_moi` : nom donné à ton propre compteur dans l'événement CSV.
 - `mdi_url` : police d'icônes Material Design, **figée en version 7.4.47** pour que les codes des icônes (`\U000F058C`…) ne changent pas lors d'une mise à jour.
 
@@ -211,7 +213,7 @@ L'heure vient de HA (`platform: homeassistant`). Deux tâches tournent à heure 
 
 **Chaque jour à minuit** :
 1. « Conso hier » = dernier index reçu − 1er index de la veille. Le jour de la veille est calculé à partir de minuit moins 1 h.
-2. Les capteurs « Conso aujourd'hui » (toi + 4 voisins) sont recalculés et retombent à 0 jusqu'à la première trame du nouveau jour.
+2. Les capteurs « Conso aujourd'hui » (toi et chaque voisin, qui ajoute sa propre tâche de minuit) sont recalculés et retombent à 0 jusqu'à la première trame du nouveau jour.
 
 ### `globals` : la mémoire interne
 
@@ -224,7 +226,8 @@ L'heure vient de HA (`platform: homeassistant`). Deux tâches tournent à heure 
 | `g_day_start`, `g_day` | 1er index du jour et jour de l'année correspondant | oui |
 | `g_leak_hours`, `g_night_flag` | Heures de conso consécutives, drapeau de fuite de nuit | oui |
 | `g_page` | Page affichée sur l'OLED (0, 1 ou 2) | non |
-| `vN_total`, `vN_day_start`, `vN_day` | Pareil pour chaque voisin N (index, 1er index du jour, jour) | oui (sauf `vN_total`) |
+| `vN_total`, `vN_day_start`, `vN_day` | Pareil pour chaque voisin N (index, 1er index du jour, jour), créées par `voisins/voisin.yaml` | oui (sauf `vN_total`) |
+| `g_voisins`, `g_v_infos` | Tables remplies au démarrage par chaque voisin : numéro de compteur → voisin N, et voisin N → nom, index, conso du jour (export CSV) | non |
 | `g_id_off` | Position du numéro de compteur dans l'en-tête des trames (4 ou 6), apprise automatiquement | oui |
 | `g_csv_last` | Pour chaque numéro de compteur, l'instant du dernier événement CSV envoyé | non |
 | `g_ev_nom`, `g_ev_index`, `g_ev_conso` | Valeurs préparées pour l'événement envoyé à HA | non |
@@ -275,14 +278,14 @@ rx_gain: BOOSTED   rf_switch: true   has_tcxo: true
   mode: [T1]
 ```
 
-- Un bloc pour toi, puis un par voisin. `type: dme_07` est le driver des compteurs d'eau DME. Change-le si un voisin a un autre modèle.
+- Un bloc pour toi ; chaque voisin ajoute le sien (`compteur_vN`) depuis `voisins/voisin.yaml`. `type: dme_07` est le driver des compteurs d'eau DME. Pour un voisin d'un autre modèle, ajoute `type:` dans ses `vars`.
 - `mode: [T1]` : mode wM-Bus T1 (émission seule du compteur, 868,95 MHz), celui des compteurs d'eau.
 - `meter_id` doit être un numéro précis (pas de joker) : **seuls les compteurs déclarés ici voient leur index décodé**. Les autres ne remontent que leur numéro et leur RSSI.
 - Si un compteur a une trame chiffrée, ajoute sa clé avec l'option `key:` (voir la documentation du composant).
 
 ### `script` `envoi_trame` : l'événement envoyé à Home Assistant
 
-Paramètres : `p_id` (numéro sur 8 chiffres hexadécimaux), `p_rssi` (dBm), `p_slot` (−1 = inconnu, 0 = toi, 1 à 4 = voisins). `mode: parallel` : plusieurs compteurs peuvent être traités en même temps.
+Paramètres : `p_id` (numéro sur 8 chiffres hexadécimaux), `p_rssi` (dBm), `p_slot` (−1 = inconnu, 0 = toi, 1 à 10 = voisins). `mode: parallel` : plusieurs compteurs peuvent être traités en même temps.
 
 1. **Attente de 2 s**, le temps que `wmbus_meter` décode la trame et mette l'index à jour.
 2. Préparation du nom, de l'index (3 décimales) et de la conso du jour (litres) selon `p_slot`. Pour un compteur inconnu, index et conso restent vides.
@@ -309,7 +312,7 @@ Paramètres : `p_id` (numéro sur 8 chiffres hexadécimaux), `p_rssi` (dBm), `p_
 - `WiFi RSSI` : force du signal WiFi, toutes les 30 s.
 - Capteurs `template` : `Débit estimé` (L/h), `Conso dernière heure`, `Conso hier`, `Heures de conso continue`, `Conso aujourd'hui` (recalculée toutes les 60 s, 0 par défaut).
 
-**Chaque voisin** (blocs « Voisin 1 » à « Voisin 4 ») : `Nom - Index` (avec la même logique de 1er index du jour), `Nom - RSSI` et `Nom - Conso aujourd'hui`.
+**Chaque voisin** (créés par `voisins/voisin.yaml`) : `Nom - Index` (avec la même logique de 1er index du jour), `Nom - RSSI` et `Nom - Conso aujourd'hui`.
 
 ### `text_sensor`
 
@@ -365,17 +368,72 @@ SSD1306 128×64 en I2C à l'adresse `0x3C`, reset sur GPIO21, redessiné toutes 
 
 ### Adapter la configuration
 
-**Moins de 4 voisins** : pour le voisin N, supprime :
-- `num_vN` / `nom_vN` dans `substitutions` ;
-- son bloc dans `wmbus_meter` (`compteur_vN`) ;
-- ses 3 variables `vN_*` dans `globals` ;
-- ses 3 capteurs dans `sensor` (`vN_index`, `vN_rssi`, `vN_conso_jour`) ;
-- la ligne `id(vN_conso_jour).update();` de la tâche de minuit (`time`) ;
-- la ligne `strtoul("${num_vN}"…)` dans le tableau `connus` de `on_frame`, en réduisant la taille du tableau et la boucle (`connus[5]`, `i < 5`) ;
-- le `case N:` du script `envoi_trame` ;
-- `compteurN` / `nomcompteurN` dans `secrets.yaml`.
+**Nombre de voisins** : voir [Voisins](#voisins--de-0-à-10).
 
 **Autre carte** : adapte les broches de `spi`, `wmbus_radio`, `i2c`, `display` et `output` (Vext). Si la carte n'a pas de Vext, supprime `output` et `on_boot`.
+
+## Voisins : de 0 à 10
+
+Chaque voisin est **une ligne** dans `compteur-eau-lora.yaml`, qui inclut le modèle `voisins/voisin.yaml` avec ses variables :
+
+```yaml
+packages:
+  voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }
+  voisin2: !include { file: voisins/voisin.yaml, vars: { i: 2, num: !secret compteur2, nom: !secret nomcompteur2 } }
+```
+
+| Variable | Rôle |
+|---|---|
+| `i` | Numéro du voisin, **de 1 à 10, sans doublon**. Il fixe les identifiants internes (`v1_total`, `compteur_v1`…) : ne le change pas pour un voisin existant, sinon son 1er index du jour mémorisé est perdu |
+| `num` | Numéro du compteur, `"0x12345678"` (secret `compteurN`) |
+| `nom` | Nom affiché dans HA (secret `nomcompteurN`) : entités « Dupont - Index », « Dupont - RSSI », « Dupont - Conso aujourd'hui » |
+| `type` | Facultatif : driver `wmbus_meter` du compteur, `dme_07` par défaut (ex. `type: izar`) |
+
+**Ajouter un voisin** : ajoute `compteurN` et `nomcompteurN` dans `secrets.yaml`, puis une ligne `voisinN` avec le même `i: N`. Recompile et installe (OTA).
+
+**Retirer un voisin** : supprime sa ligne. Ses secrets peuvent rester. Dans HA, ses entités passent « indisponibles » : supprime-les depuis la page de l'appareil.
+
+**Aucun voisin** : supprime toutes les lignes `voisinN` et remplace `packages:` par `packages: {}`.
+
+> Paquet ntfy : sa version actuelle envoie les bilans des voisins **1 à 4** et lit `nom_v1`… `nom_v4` dans `substitutions`. Garde ces 4 voisins (et ces substitutions) tant que tu l'utilises ; le passage du paquet aux voisins dynamiques est suivi dans [Esphome-Compteur-wmbus-ntfy#5](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy/issues/5).
+
+### Dans ESPHome Builder
+
+ESPHome Builder (module complémentaire de Home Assistant, ou tableau de bord ESPHome) range ses fichiers dans le dossier `esphome` de la configuration HA (`/config/esphome/`). Son éditeur ne modifie que les fichiers d'appareils et ne sait pas créer de dossier. Deux façons de fournir `voisins/voisin.yaml` :
+
+**Option A : copier le fichier (hors ligne, version figée)**
+
+1. Installe un module d'accès aux fichiers : **File editor** ou **Studio Code Server** (Paramètres → Modules complémentaires → Boutique), ou le partage réseau **Samba share**.
+2. Dans le dossier `esphome`, crée le dossier **`voisins`**, puis le fichier **`voisins/voisin.yaml`** avec le contenu de [voisins/voisin.yaml](voisins/voisin.yaml).
+3. Vérifie l'arborescence :
+   ```
+   esphome/
+   ├── compteur-eau-lora.yaml
+   ├── secrets.yaml
+   └── voisins/
+       └── voisin.yaml
+   ```
+   Le Builder n'affiche que les fichiers à la racine de `esphome/` : le modèle, rangé dans `voisins/`, n'apparaît pas comme un faux appareil.
+4. Dans le Builder, ouvre `compteur-eau-lora` → **Edit**, ajuste les lignes `voisinN`, puis **Validate** et **Install → Wirelessly**.
+
+Le Builder a aussi son propre `secrets.yaml` (bouton **Secrets** en haut à droite) : c'est là que vont `compteur5`, `nomcompteur5`…
+
+**Option B : charger le modèle depuis GitHub (aucun fichier à copier)**
+
+`voisins/voisin.yaml` ne contient aucun secret : ESPHome peut le télécharger. Remplace chaque ligne `voisinN` par :
+
+```yaml
+packages:
+  voisin1:
+    url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus
+    ref: main            # ou un tag de version, pour figer le modèle
+    refresh: 1d
+    files:
+      - path: voisins/voisin.yaml
+        vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 }
+```
+
+Les secrets restent dans ton `secrets.yaml` : seules les variables locales leur font référence. Il faut un accès Internet à la compilation.
 
 ## Entités Home Assistant
 
@@ -394,7 +452,7 @@ SSD1306 128×64 en I2C à l'adresse `0x3C`, reset sur GPIO21, redessiné toutes 
 | Mode absence | Interrupteur |
 | 6 capteurs « problème » | Voir [Alertes](#détection-de-fuite-et-alertes) |
 
-**Chaque voisin** (nom = `nomcompteurN`) : `Nom - Index` (m³), `Nom - Conso aujourd'hui` (L), `Nom - RSSI` (diagnostic).
+**Chaque voisin déclaré** (nom = `nomcompteurN`) : `Nom - Index` (m³), `Nom - Conso aujourd'hui` (L), `Nom - RSSI` (diagnostic).
 
 ## Calcul de la conso du jour
 
@@ -505,7 +563,29 @@ En plus du tableau de bord Énergie, `ha_dashboard_compteur_eau.yaml` décrit un
 | Diagnostic | Statut du compteur, RSSI radio et WiFi, compteur silencieux |
 | Signal | Courbe du RSSI radio et WiFi sur 24 h |
 
-**Installation** : Paramètres → Tableaux de bord → **Ajouter un tableau de bord** → Nouveau tableau de bord à partir de zéro, titre « Compteur d'eau ». Ouvre-le, puis crayon → ⋮ → **Éditeur de configuration brute**. Remplace tout le contenu par le fichier et enregistre.
+### Générer le tableau de bord avec tes voisins
+
+`scripts/generer_tableau_de_bord.py` part de `ha_dashboard_compteur_eau.yaml` et ajoute une vue **« Voisins »** construite à partir des voisins déclarés dans `compteur-eau-lora.yaml` (noms lus dans `secrets.yaml`) :
+
+| Section | Contenu |
+|---|---|
+| Tous les compteurs | Conso par jour sur 30 jours (toi + chaque voisin, en barres), RSSI radio de tous les compteurs sur 24 h |
+| Une section par voisin | Index, conso du jour, signal radio, conso par jour sur 30 jours |
+
+Depuis la racine du dépôt, à côté de ton `secrets.yaml` :
+
+```bash
+uv run --with pyyaml python scripts/generer_tableau_de_bord.py
+# ou : pip install pyyaml && python3 scripts/generer_tableau_de_bord.py
+```
+
+Le script écrit `ha_dashboard_compteur_eau.genere.yaml`, ignoré par git car il contient les noms des voisins. Relance-le après chaque ajout ou retrait de voisin. Options : `--config`, `--secrets`, `--sortie`, et `--appareil` si ton appareil n'a plus le nom `Compteur Eau LoRa` dans HA.
+
+Avec ESPHome Builder, copie `compteur-eau-lora.yaml` et `secrets.yaml` depuis `/config/esphome/` (File editor ou Samba) vers ton clone du dépôt, ou lance le script avec `--config` et `--secrets` pointant sur le partage Samba.
+
+### Installer le tableau de bord
+
+**Installation** : Paramètres → Tableaux de bord → **Ajouter un tableau de bord** → Nouveau tableau de bord à partir de zéro, titre « Compteur d'eau ». Ouvre-le, puis crayon → ⋮ → **Éditeur de configuration brute**. Remplace tout le contenu par le fichier (`ha_dashboard_compteur_eau.genere.yaml`, ou `ha_dashboard_compteur_eau.yaml` sans vue Voisins) et enregistre.
 
 Remarques :
 - Les identifiants d'entités supposent l'appareil nommé `compteur-eau-lora`. Si tu l'as renommé, remplace le préfixe `compteur_eau_lora_`.

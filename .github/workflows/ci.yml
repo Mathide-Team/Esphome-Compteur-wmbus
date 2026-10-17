@@ -42,6 +42,18 @@ jobs:
         # sans compiler. La sortie (configuration résolue) n'est pas affichée.
         run: uvx --from "esphome==${ESPHOME_VERSION}" esphome config compteur-eau-lora.yaml > /dev/null
 
+      - name: Validation ESPHome avec 0 et 10 voisins (voisins/voisin.yaml)
+        run: |
+          for n in 0 10; do
+            uv run --no-project python scripts/ci_voisins.py "$n"
+            uvx --from "esphome==${ESPHOME_VERSION}" esphome config "ci-voisins-$n.yaml" > /dev/null
+          done
+
+      - name: Générateur du tableau de bord (voisins déclarés)
+        run: |
+          uv run --no-project --with pyyaml==6.0.3 python scripts/generer_tableau_de_bord.py
+          uvx yamllint==1.38.0 --strict -c .yamllint.yaml ha_dashboard_compteur_eau.genere.yaml
+
   compilation:
     name: Compilation (esphome compile)
     # Longue (ESP-IDF) : seulement à la demande et sur main, pas obligatoire.

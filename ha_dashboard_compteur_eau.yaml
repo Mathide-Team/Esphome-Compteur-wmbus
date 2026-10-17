@@ -290,6 +290,16 @@ views:
             icon: mdi:airplane
             features:
               - type: toggle
+          - type: entities
+            title: Écran de la carte
+            show_header_toggle: false
+            entities:
+              - entity: switch.compteur_eau_lora_ecran_extinction_nocturne
+                name: Extinction nocturne
+              - entity: number.compteur_eau_lora_ecran_extinction_a
+                name: Éteint à
+              - entity: number.compteur_eau_lora_ecran_rallumage_a
+                name: Rallumé à
       - type: grid
         cards:
           - type: heading

@@ -21,6 +21,8 @@ substitutions:
   # Sert au récepteur wM-Bus et à l'écran 1 (affiché sans le « 0x »)
   num_compteur: !secret compteur0
   nom_moi: "Mon compteur"   # nom écrit dans le CSV pour ton propre compteur
+  fuseau: "Europe/Paris"   # fuseau horaire de l'heure Internet (SNTP), utilisé si HA est arrêté
+  bouton_pin: GPIO0        # bouton PRG de la carte (brochage Heltec V3/V4) : page suivante, réveil de l'écran
   # Compatibilité avec le paquet ntfy actuel (bilans des voisins 1 à 4, qui lit ${nom_v1}…) :
   # à garder tant que tu utilises ce paquet dans sa version à 4 voisins fixes.
   nom_v1: !secret nomcompteur1
@@ -81,7 +83,13 @@ wifi:
     password: !secret fallback_hotspot_password
 captive_portal:
 
+# Deux sources d'heure qui règlent la MÊME horloge de l'ESP : id(ha_time).now() est valide dès
+# que l'une des deux a répondu. Si Home Assistant est arrêté, l'heure Internet (SNTP) prend le
+# relais : conso du jour, bascule de minuit et extinction nocturne de l'écran continuent.
+# SNTP sans « id » : ESPHome le fusionne avec celui du paquet ntfy s'il est installé.
 time:
+  - platform: sntp
+    timezone: ${fuseau}
   - platform: homeassistant
     id: ha_time
     on_time:
@@ -173,6 +181,15 @@ globals:
     initial_value: 'false'
   - id: g_page           # page affichée sur l'OLED : 0 = index, 1 = signaux, 2 = alertes
     type: int
+    initial_value: '0'
+  - id: g_ecran_eteint   # vrai pendant l'extinction nocturne
+    type: bool
+    initial_value: 'false'
+  - id: g_reveil_ms      # écran rallumé par le bouton jusqu'à cet instant (millis)
+    type: uint32_t
+    initial_value: '0'
+  - id: g_pause_ms       # rotation automatique suspendue jusqu'à cet instant (après un appui)
+    type: uint32_t
     initial_value: '0'
 
   # ── Voisins (tables remplies au démarrage par chaque voisins/voisin.yaml) ──
@@ -305,6 +322,17 @@ wmbus_meter:
 
 # ───────────────────────── Envoi d'un évènement vers Home Assistant ─────────────────────────
 script:
+  # Page suivante de l'écran (rotation automatique et bouton) : la page « alertes » est sautée
+  # s'il n'y a aucune alerte
+  - id: page_suivante
+    then:
+      - lambda: |-
+          bool alerte = id(bs_fuite_confirmee).state || id(bs_fuite_nuit).state ||
+                        id(bs_debit_anormal).state || id(bs_conso_jour).state ||
+                        id(bs_absence).state || id(bs_silencieux).state;
+          int suivante = (id(g_page) + 1) % 3;
+          if (suivante == 2 && !alerte) suivante = 0;
+          id(g_page) = suivante;
   - id: envoi_trame
     mode: parallel
     parameters:
@@ -595,6 +623,32 @@ number:
     mode: box
     unit_of_measurement: "L"
     entity_category: config
+  # Extinction nocturne de l'écran : de « début » (inclus) à « fin » (exclue), plage qui peut
+  # passer minuit (22 → 7 par défaut). Début = fin : jamais éteint.
+  - platform: template
+    id: ecran_nuit_debut
+    name: "Écran - extinction à"
+    optimistic: true
+    restore_value: true
+    initial_value: 22
+    min_value: 0
+    max_value: 23
+    step: 1
+    mode: box
+    unit_of_measurement: "h"
+    entity_category: config
+  - platform: template
+    id: ecran_nuit_fin
+    name: "Écran - rallumage à"
+    optimistic: true
+    restore_value: true
+    initial_value: 7
+    min_value: 0
+    max_value: 23
+    step: 1
+    mode: box
+    unit_of_measurement: "h"
+    entity_category: config
   - platform: template
     id: csv_intervalle_min
     name: "Export CSV - intervalle"
@@ -615,6 +669,12 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
   - platform: template
+    id: ecran_nuit_actif
+    name: "Écran - extinction nocturne"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+  - platform: template
     id: csv_actif
     name: "Export CSV actif"
     optimistic: true
@@ -622,6 +682,33 @@ switch:
     entity_category: config
 
 binary_sensor:
+  # Bouton PRG : page suivante ; la nuit, rallume l'écran 60 s (sans changer de page)
+  - platform: gpio
+    id: bouton
+    name: "Bouton de la carte"
+    entity_category: diagnostic
+    pin:
+      number: ${bouton_pin}
+      inverted: true
+      ignore_strapping_warning: true   # GPIO0 = bouton BOOT/PRG : prévu pour ça
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - delayed_on: 20ms
+    on_press:
+      then:
+        - lambda: |-
+            uint32_t maintenant = millis();
+            id(g_pause_ms) = maintenant + 30000;   // laisse 30 s pour lire la page choisie
+            if (id(g_ecran_eteint)) {
+              id(g_reveil_ms) = maintenant + 60000;
+              id(g_ecran_eteint) = false;
+              id(oled).turn_on();
+            } else {
+              id(page_suivante).execute();
+            }
+            id(oled).update();
   - platform: template
     id: bs_fuite_confirmee
     name: "Fuite confirmée"
@@ -726,17 +813,28 @@ font:
       - "\U000F087B"     # home-alert (conso pendant absence)
       - "\U000F0783"     # signal-off (compteur silencieux)
 
-# Rotation des pages toutes les 5 s ; la page « alertes » est sautée s'il n'y a aucune alerte
+# Toutes les 5 s : extinction nocturne, puis rotation des pages (suspendue 30 s après un appui
+# sur le bouton). La page « alertes » est sautée s'il n'y a aucune alerte.
 interval:
   - interval: 5s
     then:
       - lambda: |-
-          bool alerte = id(bs_fuite_confirmee).state || id(bs_fuite_nuit).state ||
-                        id(bs_debit_anormal).state || id(bs_conso_jour).state ||
-                        id(bs_absence).state || id(bs_silencieux).state;
-          int suivante = (id(g_page) + 1) % 3;
-          if (suivante == 2 && !alerte) suivante = 0;
-          id(g_page) = suivante;
+          uint32_t maintenant = millis();
+          // Nuit ? Heure inconnue (ni HA ni Internet) : l'écran reste allumé.
+          bool nuit = false;
+          auto now = id(ha_time).now();
+          if (id(ecran_nuit_actif).state && now.is_valid()) {
+            int h = now.hour, debut = (int) id(ecran_nuit_debut).state, fin = (int) id(ecran_nuit_fin).state;
+            nuit = debut < fin ? (h >= debut && h < fin) : debut > fin ? (h >= debut || h < fin) : false;
+          }
+          bool eteindre = nuit && (int32_t) (maintenant - id(g_reveil_ms)) >= 0;
+          if (eteindre != id(g_ecran_eteint)) {
+            id(g_ecran_eteint) = eteindre;
+            if (eteindre) id(oled).turn_off(); else id(oled).turn_on();
+            ESP_LOGI("ecran", "Écran %s", eteindre ? "éteint (nuit)" : "rallumé");
+          }
+          if (eteindre) return;
+          if ((int32_t) (maintenant - id(g_pause_ms)) >= 0) id(page_suivante).execute();
           id(oled).update();
 
 display:

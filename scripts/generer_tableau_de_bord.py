@@ -2,10 +2,13 @@
 """Génère le tableau de bord Home Assistant « Compteur d'eau » avec une vue par voisin déclaré.
 
 Le script lit :
-  - compteur-eau-lora.yaml : nom de l'appareil et voisins déclarés dans « packages: »
-    (modèle voisins/voisin.yaml, inclus localement ou depuis GitHub) ;
-  - secrets.yaml : valeurs des « !secret » (noms des voisins) ;
+  - compteur-eau-lora.yaml : nom de l'appareil et paquets inclus ;
+  - secrets.yaml : voisins (compteur1 … compteur10, nomcompteurN) si voisins/voisins.yaml est
+    inclus, et valeurs des « !secret » des voisins déclarés à la main (voisins/voisin.yaml) ;
   - ha_dashboard_compteur_eau.yaml : vue de base (ton compteur).
+
+Il règle aussi les jauges sur les seuils d'alerte (valeurs initiales de la configuration, ou
+--seuil-debit / --seuil-jour) et ajoute les boutons ntfy si ce paquet est inclus.
 
 Il écrit ha_dashboard_compteur_eau.genere.yaml (ignoré par git : il contient les noms
 des voisins), à coller dans Home Assistant (crayon > ⋮ > Éditeur de configuration brute).
@@ -29,6 +32,8 @@ except ImportError:  # pragma: no cover
     sys.exit("PyYAML manquant : « pip install pyyaml » ou « uv run --with pyyaml python … »")
 
 MODELE_VOISIN = "voisins/voisin.yaml"
+VOISINS_AUTO = "voisins/voisins.yaml"   # voisins déduits de secrets.yaml
+FUSION_INCLUDE = re.compile(r"^[ \t]*<<:[ \t]*!include[ \t]+\S+[ \t]*(#.*)?\n", re.M)
 
 
 # ───────────────────────────── Lecture du YAML ESPHome ─────────────────────────────
@@ -72,8 +77,10 @@ def chargeur(secrets: dict) -> type:
 
 
 def lire_yaml(chemin: Path, secrets: dict | None = None):
-    with chemin.open(encoding="utf-8") as f:
-        return yaml.load(f, Loader=chargeur(secrets or {}))
+    texte = chemin.read_text(encoding="utf-8")
+    # « <<: !include secrets.yaml » (fusion YAML d'un fichier) : non géré par PyYAML, inutile ici
+    texte = FUSION_INCLUDE.sub("", texte)
+    return yaml.load(texte, Loader=chargeur(secrets or {}))
 
 
 def substituer(valeur, subs: dict):
@@ -83,29 +90,52 @@ def substituer(valeur, subs: dict):
     return re.sub(r"\$\{(\w+)\}|\$(\w+)", lambda m: str(subs.get(m.group(1) or m.group(2), m.group(0))), valeur)
 
 
-def voisins_declares(config: dict) -> list[dict]:
-    """Liste des voisins {i, nom, num} déclarés dans « packages: », triée par i."""
+def voisins_de_secrets(secrets: dict) -> list[dict]:
+    """Voisins de voisins/voisins.yaml : « compteurN » présent et non vide (N = 1 à 10)."""
+    return [
+        {"i": i, "nom": str(secrets.get(f"nomcompteur{i}") or f"Voisin {i}"), "num": str(secrets[f"compteur{i}"])}
+        for i in range(1, 11)
+        if secrets.get(f"compteur{i}") not in (None, "")
+    ]
+
+
+def chemins_paquet(pkg) -> list[tuple[str, dict | None]]:
+    """(fichier, variables) d'un paquet : !include local, ou paquet distant (url + files)."""
+    if isinstance(pkg, Include):
+        return [(pkg.fichier.replace("\\", "/"), pkg.variables)]
+    if isinstance(pkg, dict) and "files" in pkg:
+        return [
+            (str(f.get("path", "")), f.get("vars") or {}) if isinstance(f, dict) else (str(f), None)
+            for f in pkg["files"] or []
+        ]
+    if isinstance(pkg, str) and pkg.startswith("github://"):
+        return [(pkg.split("@")[0], None)]
+    return []
+
+
+def voisins_declares(config: dict, secrets: dict | None = None) -> list[dict]:
+    """Liste des voisins {i, nom, num} : déduits de secrets.yaml et/ou déclarés à la main."""
     subs = config.get("substitutions") or {}
     trouves = []
     for cle, pkg in (config.get("packages") or {}).items():
-        variables = None
-        if isinstance(pkg, Include) and pkg.fichier.replace("\\", "/").endswith(MODELE_VOISIN):
-            variables = pkg.variables
-        elif isinstance(pkg, dict) and "files" in pkg:  # paquet distant (GitHub)
-            for f in pkg["files"] or []:
-                if isinstance(f, dict) and str(f.get("path", "")).endswith(MODELE_VOISIN):
-                    variables = f.get("vars") or {}
-        if variables is None:
-            continue
-        v = {k: substituer(val, subs) for k, val in variables.items()}
-        if "i" not in v or "nom" not in v:
-            sys.exit(f"Paquet « {cle} » : variables i et nom obligatoires")
-        trouves.append({"i": int(v["i"]), "nom": str(v["nom"]), "num": str(v.get("num", ""))})
+        for fichier, variables in chemins_paquet(pkg):
+            if fichier.endswith(VOISINS_AUTO):
+                trouves += voisins_de_secrets(secrets or {})
+            elif fichier.endswith(MODELE_VOISIN):
+                trouves.append(voisin_manuel(cle, variables or {}, subs))
     numeros = [v["i"] for v in trouves]
     doublons = {i for i in numeros if numeros.count(i) > 1}
     if doublons:
         sys.exit(f"Numéro de voisin en double : {sorted(doublons)}")
     return sorted(trouves, key=lambda v: v["i"])
+
+
+def voisin_manuel(cle: str, variables: dict, subs: dict) -> dict:
+    """Voisin déclaré par une ligne « voisinN: !include { file: voisins/voisin.yaml, vars: … } »."""
+    v = {k: substituer(val, subs) for k, val in variables.items()}
+    if "i" not in v or "nom" not in v:
+        sys.exit(f"Paquet « {cle} » : variables i et nom obligatoires")
+    return {"i": int(v["i"]), "nom": str(v["nom"]), "num": str(v.get("num", ""))}
 
 
 # ───────────────────────────── Identifiants Home Assistant ─────────────────────────────
@@ -128,7 +158,7 @@ def vue_voisins(voisins: list[dict], appareil: str) -> dict:
             "title": "Voisins", "path": "voisins", "icon": "mdi:account-group", "type": "sections",
             "sections": [{"type": "grid", "cards": [{
                 "type": "markdown",
-                "content": "Aucun voisin déclaré dans `compteur-eau-lora.yaml` (voir README, « Voisins »).",
+                "content": "Aucun voisin dans `secrets.yaml` (compteur1 … compteur10, voir README, « Voisins »).",
             }]}],
         }
 
@@ -176,6 +206,22 @@ def vue_voisins(voisins: list[dict], appareil: str) -> dict:
                  "name": "Aujourd'hui", "icon": "mdi:calendar-today", "vertical": True},
                 {"type": "tile", "entity": entite("sensor", appareil, f"{nom} - RSSI"),
                  "name": "Signal radio", "icon": "mdi:radio-tower", "vertical": True},
+                {"type": "tile", "entity": entite("sensor", appareil, f"{nom} - Dernière trame"),
+                 "name": "Dernière trame", "icon": "mdi:clock-check-outline", "vertical": True},
+                {"type": "tile", "entity": entite("sensor", appareil, f"{nom} - Débit estimé"),
+                 "name": "Débit estimé", "icon": "mdi:speedometer", "vertical": True},
+                {
+                    # Alertes du voisin (mêmes règles et seuils que ton compteur)
+                    "type": "entities",
+                    "title": "Alertes",
+                    "show_header_toggle": False,
+                    "state_color": True,
+                    "entities": [
+                        {"entity": entite("binary_sensor", appareil, f"{nom} - {alerte}"), "name": alerte}
+                        for alerte in ("Fuite confirmée", "Fuite suspectée (nuit)", "Débit anormal",
+                                       "Conso journalière anormale", "Compteur silencieux")
+                    ],
+                },
                 {
                     "type": "statistics-graph",
                     "title": "Conso journalière (30 jours)",
@@ -191,6 +237,69 @@ def vue_voisins(voisins: list[dict], appareil: str) -> dict:
         "title": "Voisins", "path": "voisins", "icon": "mdi:account-group",
         "type": "sections", "max_columns": 3, "sections": sections,
     }
+
+
+# ───────────────────────────── Jauges et actions ─────────────────────────────
+
+def valeur_initiale(config: dict, ident: str) -> float | None:
+    for n in config.get("number") or []:
+        if isinstance(n, dict) and n.get("id") == ident and "initial_value" in n:
+            return float(n["initial_value"])
+    return None
+
+
+def regler_jauges(tableau: dict, appareil: str, seuil_debit: float, seuil_jour: float) -> None:
+    """Max et paliers des jauges dérivés des seuils (mêmes proportions que les valeurs d'origine)."""
+    regles = {
+        entite("sensor", appareil, "Débit estimé"): (seuil_debit, 0.3, 1.5),
+        entite("sensor", appareil, "Conso aujourd'hui"): (seuil_jour, 0.625, 1.25),
+    }
+    for carte in cartes(tableau):
+        r = regles.get(carte.get("entity")) if carte.get("type") == "gauge" else None
+        if not r:
+            continue
+        seuil, orange, maxi = r
+        carte["max"] = round(seuil * maxi)
+        carte["segments"] = [
+            {"from": 0, "color": "#43a047"},
+            {"from": round(seuil * orange), "color": "#fb8c00"},
+            {"from": round(seuil), "color": "#e53935"},
+        ]
+
+
+def cartes(tableau: dict):
+    for vue in tableau.get("views", []):
+        for section in vue.get("sections", []):
+            yield from section.get("cards", [])
+
+
+def paquet_ntfy(config: dict) -> bool:
+    for pkg in (config.get("packages") or {}).values():
+        if isinstance(pkg, str) and "ntfy.yaml" in pkg:
+            return True
+        if isinstance(pkg, Include) and pkg.fichier.endswith("ntfy.yaml"):
+            return True
+        if isinstance(pkg, dict) and any("ntfy.yaml" in str(f) for f in pkg.get("files") or []):
+            return True
+    return False
+
+
+def ajouter_actions_ntfy(tableau: dict, appareil: str) -> None:
+    for vue in tableau.get("views", []):
+        for section in vue.get("sections", []):
+            titres = [c.get("heading") for c in section.get("cards", []) if c.get("type") == "heading"]
+            if "Actions" in titres:
+                section["cards"].append({
+                    "type": "entities",
+                    "title": "Notifications ntfy",
+                    "show_header_toggle": False,
+                    "entities": [
+                        {"entity": entite("switch", appareil, "ntfy - notifications actives"), "name": "Notifications actives"},
+                        {"entity": entite("button", appareil, "ntfy - message de test"), "name": "Message de test"},
+                        {"entity": entite("button", appareil, "ntfy - envoyer les bilans maintenant"), "name": "Envoyer les bilans maintenant"},
+                    ],
+                })
+                return
 
 
 # ───────────────────────────── Programme principal ─────────────────────────────
@@ -210,6 +319,8 @@ def main() -> None:
     ap.add_argument("--base", type=Path, default=racine / "ha_dashboard_compteur_eau.yaml")
     ap.add_argument("--sortie", type=Path, default=racine / "ha_dashboard_compteur_eau.genere.yaml")
     ap.add_argument("--appareil", help="nom de l'appareil dans HA (défaut : friendly_name de la configuration)")
+    ap.add_argument("--seuil-debit", type=float, help="seuil de débit anormal en L/h (défaut : valeur de la configuration)")
+    ap.add_argument("--seuil-jour", type=float, help="seuil de conso journalière en L (défaut : valeur de la configuration)")
     args = ap.parse_args()
 
     chemin_secrets = args.secrets or args.config.parent / "secrets.yaml"
@@ -220,17 +331,25 @@ def main() -> None:
 
     esphome = config.get("esphome") or {}
     appareil = args.appareil or esphome.get("friendly_name") or esphome.get("name", "compteur-eau-lora")
-    voisins = voisins_declares(config)
+    voisins = voisins_declares(config, secrets)
 
     tableau = lire_yaml(args.base)
     vues = [v for v in tableau.get("views", []) if v.get("path") != "voisins"]
     vues.append(vue_voisins(voisins, appareil))
     tableau["views"] = vues
 
+    seuil_debit = args.seuil_debit or valeur_initiale(config, "seuil_debit_l_h") or 1000
+    seuil_jour = args.seuil_jour or valeur_initiale(config, "seuil_jour_l") or 800
+    regler_jauges(tableau, appareil, seuil_debit, seuil_jour)
+    ntfy = paquet_ntfy(config)
+    if ntfy:
+        ajouter_actions_ntfy(tableau, appareil)
+
     entete = (
         "# Tableau de bord GÉNÉRÉ par scripts/generer_tableau_de_bord.py : ne pas modifier à la main,\n"
         "# relancer le script après avoir ajouté ou retiré un voisin.\n"
         f"# Appareil : {appareil} | voisins : {', '.join(v['nom'] for v in voisins) or 'aucun'}\n"
+        f"# Jauges : seuil débit {seuil_debit:g} L/h, seuil jour {seuil_jour:g} L | ntfy : {'oui' if ntfy else 'non'}\n"
     )
     texte = yaml.dump(tableau, Dumper=Dumper, allow_unicode=True, sort_keys=False, width=1000)
     args.sortie.write_text(entete + texte, encoding="utf-8")

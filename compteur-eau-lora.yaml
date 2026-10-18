@@ -5,11 +5,15 @@
 #  secrets.yaml requis :
 #    wifi_ssid, wifi_password, fallback_hotspot_ssid, fallback_hotspot_password,
 #    ota_password,
-#    compteur0               (ton compteur, chaîne entre guillemets, ex. "0x12345678"),
-#    compteur1 … compteurN et nomcompteur1 … nomcompteurN pour les voisins déclarés
+#    compteur0               (ton compteur, chaîne entre guillemets, ex. "0x12345678").
+#  Facultatifs (absents = valeur par défaut) :
+#    type_compteur           dme_07 (Grand Besançon, défaut), izar (Grand Belfort) ou auto
+#    aes                     clé AES de ton compteur (absente ou "" = trames en clair)
+#    compteur1 … compteur10  voisins : un voisin existe dès que son « compteurN » est présent,
+#                            avec nomcompteurN, aesvN, typecompteurN facultatifs
 #
-#  Voisins : de 0 à 10, une ligne chacun dans « packages: » (fin de la section suivante),
-#  modèle voisins/voisin.yaml. Voir README, « Voisins ».
+#  Voisins : rien à écrire ici, voisins/voisins.yaml les lit dans secrets.yaml.
+#  Voir README, « Voisins » et « Izar / DME ».
 #
 #  Export CSV : l'ESP n'écrit aucun fichier. Il envoie un évènement
 #  « esphome.wmbus_trame » à Home Assistant pour chaque compteur entendu (connu
@@ -17,29 +21,25 @@
 # ══════════════════════════════════════════════════════════════════════════════
 
 substitutions:
+  # Toutes les entrées de secrets.yaml deviennent des substitutions : voisins, clés et type
+  # facultatifs y sont testés (« absent = valeur par défaut »). Les valeurs restent masquées
+  # dans « esphome config », comme avec !secret.
+  <<: !include secrets.yaml
   # Numéro de TON compteur (secret compteur0, au format "0x12345678", entre guillemets).
   # Sert au récepteur wM-Bus et à l'écran 1 (affiché sans le « 0x »)
   num_compteur: !secret compteur0
   nom_moi: "Mon compteur"   # nom écrit dans le CSV pour ton propre compteur
-  # Compatibilité avec le paquet ntfy actuel (bilans des voisins 1 à 4, qui lit ${nom_v1}…) :
-  # à garder tant que tu utilises ce paquet dans sa version à 4 voisins fixes.
-  nom_v1: !secret nomcompteur1
-  nom_v2: !secret nomcompteur2
-  nom_v3: !secret nomcompteur3
-  nom_v4: !secret nomcompteur4
+  fuseau: "Europe/Paris"   # fuseau horaire de l'heure Internet (SNTP), utilisé si HA est arrêté
+  bouton_pin: GPIO0        # bouton PRG de la carte (brochage Heltec V3/V4) : page suivante, réveil de l'écran
   # Police des pictogrammes (Material Design Icons, version figée)
   mdi_url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
 
-# ── Voisins : une ligne par voisin (0 à 10), i = 1 à 10 sans doublon ──
-# Ajouter un voisin : compteurN et nomcompteurN dans secrets.yaml, puis une ligne ici.
-# Retirer un voisin : supprimer sa ligne (ses secrets peuvent rester).
-# Autre modèle de compteur : ajouter « type: izar » (par ex.) dans vars.
-# ESPHome Builder, ou modèle chargé depuis GitHub sans copier de fichier : voir README, « Voisins ».
+# ── Voisins (déduits de secrets.yaml : compteur1 … compteur10), clé AES et capteurs Izar de ton
+#    compteur : tout passe par voisins/voisins.yaml, selon les entrées présentes dans secrets.yaml.
+# Ajouter un voisin : compteurN (et nomcompteurN) dans secrets.yaml. Retirer : supprimer compteurN.
+# ESPHome Builder, ou modèles chargés depuis GitHub sans copier de fichier : voir README, « Voisins ».
 packages:
-  voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }
-  voisin2: !include { file: voisins/voisin.yaml, vars: { i: 2, num: !secret compteur2, nom: !secret nomcompteur2 } }
-  voisin3: !include { file: voisins/voisin.yaml, vars: { i: 3, num: !secret compteur3, nom: !secret nomcompteur3 } }
-  voisin4: !include { file: voisins/voisin.yaml, vars: { i: 4, num: !secret compteur4, nom: !secret nomcompteur4 } }
+  voisins: !include voisins/voisins.yaml
 
 esphome:
   name: compteur-eau-lora
@@ -81,7 +81,13 @@ wifi:
     password: !secret fallback_hotspot_password
 captive_portal:
 
+# Deux sources d'heure qui règlent la MÊME horloge de l'ESP : id(ha_time).now() est valide dès
+# que l'une des deux a répondu. Si Home Assistant est arrêté, l'heure Internet (SNTP) prend le
+# relais : conso du jour, bascule de minuit et extinction nocturne de l'écran continuent.
+# SNTP sans « id » : ESPHome le fusionne avec celui du paquet ntfy s'il est installé.
 time:
+  - platform: sntp
+    timezone: ${fuseau}
   - platform: homeassistant
     id: ha_time
     on_time:
@@ -147,6 +153,22 @@ globals:
     type: int
     restore_value: yes
     initial_value: '-1'
+  - id: g_week_start     # 1er index de la semaine (lundi) et semaine correspondante
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: g_week           # n° de jour du lundi de la semaine (jours depuis le 1/1/1970)
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+  - id: g_month_start    # 1er index du mois et mois correspondant (année × 12 + mois)
+    type: double
+    restore_value: yes
+    initial_value: '0'
+  - id: g_month
+    type: int
+    restore_value: yes
+    initial_value: '-1'
   - id: g_leak_hours     # heures consécutives avec conso
     type: int
     restore_value: yes
@@ -157,6 +179,15 @@ globals:
     initial_value: 'false'
   - id: g_page           # page affichée sur l'OLED : 0 = index, 1 = signaux, 2 = alertes
     type: int
+    initial_value: '0'
+  - id: g_ecran_eteint   # vrai pendant l'extinction nocturne
+    type: bool
+    initial_value: 'false'
+  - id: g_reveil_ms      # écran rallumé par le bouton jusqu'à cet instant (millis)
+    type: uint32_t
+    initial_value: '0'
+  - id: g_pause_ms       # rotation automatique suspendue jusqu'à cet instant (après un appui)
+    type: uint32_t
     initial_value: '0'
 
   # ── Voisins (tables remplies au démarrage par chaque voisins/voisin.yaml) ──
@@ -273,8 +304,12 @@ wmbus_radio:
             char buf[9];
             snprintf(buf, sizeof(buf), "%08X", (unsigned int) idn);
             int rssi = (int) frame->rssi();
-            ESP_LOGD("csv", "Compteur %s (%s) RSSI %d dBm | en-tete %02X%02X%02X%02X %02X%02X%02X%02X%02X%02X",
-                     buf, slot >= 0 ? "connu" : "inconnu", rssi,
+            // Famille d'après la version de l'en-tête (octet 8 si le n° est aux octets 4-7) :
+            // 0x78 = Izar (type_compteur: izar), 0x7b = DME (dme_07). Aide au choix de type_compteur.
+            uint8_t version = d[8];
+            const char *famille = (id(g_id_off) != 4) ? "?" : version == 0x78 ? "Izar" : version == 0x7b ? "DME" : "autre";
+            ESP_LOGD("csv", "Compteur %s (%s, %s, version %02X) RSSI %d dBm | en-tete %02X%02X%02X%02X %02X%02X%02X%02X%02X%02X",
+                     buf, slot >= 0 ? "connu" : "inconnu", famille, version, rssi,
                      d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9]);
             id(envoi_trame).execute(std::string(buf), rssi, slot);
 
@@ -284,11 +319,22 @@ wmbus_radio:
 wmbus_meter:
   - id: mon_compteur
     meter_id: ${num_compteur}
-    type: dme_07
+    type: ${ type_compteur | default('dme_07') }   # secrets.yaml : dme_07, izar ou auto
     mode: [T1]
 
 # ───────────────────────── Envoi d'un évènement vers Home Assistant ─────────────────────────
 script:
+  # Page suivante de l'écran (rotation automatique et bouton) : la page « alertes » est sautée
+  # s'il n'y a aucune alerte
+  - id: page_suivante
+    then:
+      - lambda: |-
+          bool alerte = id(bs_fuite_confirmee).state || id(bs_fuite_nuit).state ||
+                        id(bs_debit_anormal).state || id(bs_conso_jour).state ||
+                        id(bs_absence).state || id(bs_silencieux).state;
+          int suivante = (id(g_page) + 1) % 3;
+          if (suivante == 2 && !alerte) suivante = 0;
+          id(g_page) = suivante;
   - id: envoi_trame
     mode: parallel
     parameters:
@@ -366,6 +412,28 @@ sensor:
             ESP_LOGD("conso", "Conso du jour : %.0f L (index %.3f - 1er index %.3f)",
                      (total - id(g_day_start)) * 1000.0, total, id(g_day_start));
             id(conso_jour_l).update();
+            // Semaine (du lundi) et mois : même principe que le jour (1er index reçu de la période)
+            auto jours = [](int a, int m, int j) -> int {   // jours depuis le 1/1/1970, date locale
+              a -= m <= 2;
+              int ere = (a >= 0 ? a : a - 399) / 400;
+              int ae = a - ere * 400;
+              int jda = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + j - 1;
+              return ere * 146097 + ae * 365 + ae / 4 - ae / 100 + jda - 719468;
+            };
+            int lundi = jours(now.year, now.month, now.day_of_month) - (now.day_of_week + 5) % 7;
+            if (id(g_week) != lundi || id(g_week_start) <= 0 || total < id(g_week_start)) {
+              id(g_week_start) = total; id(g_week) = lundi;
+            }
+            int mois = now.year * 12 + now.month;
+            if (id(g_month) != mois || id(g_month_start) <= 0 || total < id(g_month_start)) {
+              id(g_month_start) = total; id(g_month) = mois;
+            }
+            // Dernière trame (horodatage UTC : HA l'affiche « il y a 3 minutes »)
+            {
+              char b[32]; time_t t = (time_t) ts; struct tm tu; gmtime_r(&t, &tu);
+              strftime(b, sizeof(b), "%Y-%m-%dT%H:%M:%S+00:00", &tu);
+              id(derniere_trame).publish_state(b);
+            }
             if (id(g_flow_ts) == 0 || total < id(g_flow_total)) {
               id(g_flow_total) = total; id(g_flow_ts) = ts; return;
             }
@@ -428,16 +496,88 @@ sensor:
         return 0.0f;
       return (float) ((id(g_total) - id(g_day_start)) * 1000.0);
 
+  # ── Prix de l'eau, semaine et mois (sans configuration.yaml ni compteur de services publics) ──
+  - platform: template
+    id: prix_eau_m3
+    name: "Prix de l'eau"
+    unit_of_measurement: "EUR/m³"   # entité de prix acceptée par le tableau de bord Énergie
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: 'return id(prix_m3).state;'
+  - platform: template
+    id: conso_semaine_l
+    name: "Conso semaine"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(g_week) < 0 || id(g_total) <= 0 || id(g_week_start) <= 0) return 0.0f;
+      return (float) ((id(g_total) - id(g_week_start)) * 1000.0);
+  - platform: template
+    id: conso_mois_l
+    name: "Conso mois"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: 60s
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(g_month) != now.year * 12 + now.month || id(g_total) <= 0 || id(g_month_start) <= 0)
+        return 0.0f;
+      return (float) ((id(g_total) - id(g_month_start)) * 1000.0);
+  - platform: template
+    id: cout_jour
+    name: "Coût aujourd'hui"
+    device_class: monetary
+    unit_of_measurement: "€"
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      if (!id(conso_jour_l).has_state()) return 0.0f;
+      return id(conso_jour_l).state / 1000.0f * id(prix_m3).state;
+  - platform: template
+    id: cout_mois
+    name: "Coût mois"
+    device_class: monetary
+    unit_of_measurement: "€"
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      if (!id(conso_mois_l).has_state()) return 0.0f;
+      return id(conso_mois_l).state / 1000.0f * id(prix_m3).state;
+
   # Voisins : index, RSSI et conso du jour déclarés par voisins/voisin.yaml
 
 text_sensor:
+  - platform: template
+    id: derniere_trame
+    name: "Compteur eau - Dernière trame"
+    device_class: timestamp
+    entity_category: diagnostic
   - platform: wmbus_meter
     parent_id: mon_compteur
-    field: status
+    # dme_07 : « status » ; izar : « current_alarms » (no_alarm, leakage, meter_blocked…)
+    field: ${ 'current_alarms' if (type_compteur | default('dme_07')) == 'izar' else 'status' }
     name: "Compteur eau - Statut"
     entity_category: diagnostic
 
 number:
+  # Prix de l'eau au m³, abonnement non compris (eau + assainissement + redevances, TTC).
+  # Ex. Grand Besançon 2026, tranche 3,1 à 100 m³ : environ 3,84 €/m³. Voir README, « Prix de l'eau ».
+  - platform: template
+    id: prix_m3
+    name: "Prix de l'eau au m³"
+    optimistic: true
+    restore_value: true
+    initial_value: 4.0
+    min_value: 0
+    max_value: 20
+    step: 0.01
+    mode: box
+    unit_of_measurement: "€/m³"
+    entity_category: config
   - platform: template
     id: seuil_fuite_l
     name: "Fuite - conso min par heure"
@@ -486,6 +626,44 @@ number:
     mode: box
     unit_of_measurement: "L"
     entity_category: config
+  # Extinction nocturne de l'écran : de « début » (inclus) à « fin » (exclue), plage qui peut
+  # passer minuit (22 → 7 par défaut). Début = fin : jamais éteint.
+  - platform: template
+    id: ecran_nuit_debut
+    name: "Écran - extinction à"
+    optimistic: true
+    restore_value: true
+    initial_value: 22
+    min_value: 0
+    max_value: 23
+    step: 1
+    mode: box
+    unit_of_measurement: "h"
+    entity_category: config
+  - platform: template
+    id: ecran_nuit_fin
+    name: "Écran - rallumage à"
+    optimistic: true
+    restore_value: true
+    initial_value: 7
+    min_value: 0
+    max_value: 23
+    step: 1
+    mode: box
+    unit_of_measurement: "h"
+    entity_category: config
+  - platform: template
+    id: seuil_silence_h
+    name: "Compteur silencieux après"
+    optimistic: true
+    restore_value: true
+    initial_value: 6
+    min_value: 1
+    max_value: 72
+    step: 1
+    mode: box
+    unit_of_measurement: "h"
+    entity_category: config
   - platform: template
     id: csv_intervalle_min
     name: "Export CSV - intervalle"
@@ -506,6 +684,12 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
   - platform: template
+    id: ecran_nuit_actif
+    name: "Écran - extinction nocturne"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+  - platform: template
     id: csv_actif
     name: "Export CSV actif"
     optimistic: true
@@ -513,6 +697,33 @@ switch:
     entity_category: config
 
 binary_sensor:
+  # Bouton PRG : page suivante ; la nuit, rallume l'écran 60 s (sans changer de page)
+  - platform: gpio
+    id: bouton
+    name: "Bouton de la carte"
+    entity_category: diagnostic
+    pin:
+      number: ${bouton_pin}
+      inverted: true
+      ignore_strapping_warning: true   # GPIO0 = bouton BOOT/PRG : prévu pour ça
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - delayed_on: 20ms
+    on_press:
+      then:
+        - lambda: |-
+            uint32_t maintenant = millis();
+            id(g_pause_ms) = maintenant + 30000;   // laisse 30 s pour lire la page choisie
+            if (id(g_ecran_eteint)) {
+              id(g_reveil_ms) = maintenant + 60000;
+              id(g_ecran_eteint) = false;
+              id(oled).turn_on();
+            } else {
+              id(page_suivante).execute();
+            }
+            id(oled).update();
   - platform: template
     id: bs_fuite_confirmee
     name: "Fuite confirmée"
@@ -556,7 +767,7 @@ binary_sensor:
     lambda: |-
       auto now = id(ha_time).now();
       if (!now.is_valid() || id(g_rx_ts) == 0) return false;
-      return ((uint32_t) now.timestamp - id(g_rx_ts)) > 6 * 3600;
+      return ((uint32_t) now.timestamp - id(g_rx_ts)) > (uint32_t) id(seuil_silence_h).state * 3600;
 
 # ───────────────────────── Écran OLED (SSD1306 128x64 de la carte) ─────────────────────────
 
@@ -617,17 +828,28 @@ font:
       - "\U000F087B"     # home-alert (conso pendant absence)
       - "\U000F0783"     # signal-off (compteur silencieux)
 
-# Rotation des pages toutes les 5 s ; la page « alertes » est sautée s'il n'y a aucune alerte
+# Toutes les 5 s : extinction nocturne, puis rotation des pages (suspendue 30 s après un appui
+# sur le bouton). La page « alertes » est sautée s'il n'y a aucune alerte.
 interval:
   - interval: 5s
     then:
       - lambda: |-
-          bool alerte = id(bs_fuite_confirmee).state || id(bs_fuite_nuit).state ||
-                        id(bs_debit_anormal).state || id(bs_conso_jour).state ||
-                        id(bs_absence).state || id(bs_silencieux).state;
-          int suivante = (id(g_page) + 1) % 3;
-          if (suivante == 2 && !alerte) suivante = 0;
-          id(g_page) = suivante;
+          uint32_t maintenant = millis();
+          // Nuit ? Heure inconnue (ni HA ni Internet) : l'écran reste allumé.
+          bool nuit = false;
+          auto now = id(ha_time).now();
+          if (id(ecran_nuit_actif).state && now.is_valid()) {
+            int h = now.hour, debut = (int) id(ecran_nuit_debut).state, fin = (int) id(ecran_nuit_fin).state;
+            nuit = debut < fin ? (h >= debut && h < fin) : debut > fin ? (h >= debut || h < fin) : false;
+          }
+          bool eteindre = nuit && (int32_t) (maintenant - id(g_reveil_ms)) >= 0;
+          if (eteindre != id(g_ecran_eteint)) {
+            id(g_ecran_eteint) = eteindre;
+            if (eteindre) id(oled).turn_off(); else id(oled).turn_on();
+            ESP_LOGI("ecran", "Écran %s", eteindre ? "éteint (nuit)" : "rallumé");
+          }
+          if (eteindre) return;
+          if ((int32_t) (maintenant - id(g_pause_ms)) >= 0) id(page_suivante).execute();
           id(oled).update();
 
 display:

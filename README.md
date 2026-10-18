@@ -503,7 +503,7 @@ aesv1: "…"                                  # voisin 1, aesv2 pour le voisin 2
 | Prix de l'eau au m³ | Réglage (€/m³, abonnement non compris), voir [Prix de l'eau](#prix-de-leau) |
 | Prix de l'eau | Même valeur en capteur (`EUR/m³`), pour le tableau de bord Énergie |
 | Coût aujourd'hui / Coût mois | € = conso × prix au m³ |
-| Coût hier, Coût cette semaine, Coût semaine dernière, Coût mois dernier | € = conso de la période × prix au m³ ; la conso d'hier et celle des périodes écoulées sont mémorisées (redémarrable) |
+| Coût hier, Coût cette semaine, Coût semaine dernière, Coût mois dernier | € = conso de la période × prix au m³ ; la conso d'hier et celles des périodes écoulées sont mémorisées (redémarrable). Après une coupure qui saute une période (plusieurs jours / semaines / mois sans trame), le capteur concerné passe à « inconnu » plutôt que d'afficher une valeur qui ne correspond plus à la période attendue |
 | Compteur eau - Dernière trame | Heure de la dernière trame décodée (HA affiche « il y a 3 minutes ») |
 | Heures de conso continue | Nombre d'heures consécutives avec consommation |
 | Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière, Compteur silencieux après | Seuils réglables depuis HA (communs à ton compteur et aux voisins ; silencieux : 6 h par défaut) |

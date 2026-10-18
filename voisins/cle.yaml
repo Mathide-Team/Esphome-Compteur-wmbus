@@ -1,0 +1,8 @@
+# voisins/cle.yaml : ajoute la clé AES-128 d'un compteur (paquet ESPHome avec variables).
+# Inclus par voisins/voisins.yaml seulement si la clé est renseignée
+# dans secrets.yaml (aes pour ton compteur, aesvN pour le voisin N) : sans clé, le compteur est lu en clair.
+#   compteur  id du wmbus_meter (mon_compteur, compteur_v1…)
+#   cle       32 caractères hexadécimaux (16 octets), fournie par l'opérateur
+wmbus_meter:
+  - id: !extend ${compteur}
+    key: "${cle}"

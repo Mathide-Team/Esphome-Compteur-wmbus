@@ -8,6 +8,9 @@
 # Dans les graphiques « statistics-graph », les capteurs cumulés (state_class: total_increasing,
 # comme l'index) n'ont que les statistiques state / sum / change, et les capteurs « measurement »
 # n'ont que mean / min / max. Un type de statistique absent donne un graphique vide.
+#
+# Avec des voisins : scripts/generer_tableau_de_bord.py ajoute la vue « Voisins », règle les
+# jauges sur les seuils d'alerte et les boutons ntfy si le paquet est installé (voir README).
 title: Compteur d'eau
 views:
   - title: Eau
@@ -67,6 +70,50 @@ views:
             name: Heures continues
             icon: mdi:timer-sand
             vertical: true
+      - type: grid
+        cards:
+          - type: heading
+            heading: Coûts et périodes
+            icon: mdi:currency-eur
+          - type: tile
+            entity: sensor.compteur_eau_lora_cout_aujourd_hui
+            name: Coût aujourd'hui
+            icon: mdi:cash
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_cout_mois
+            name: Coût du mois
+            icon: mdi:cash-multiple
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_conso_semaine
+            name: Cette semaine
+            icon: mdi:calendar-week
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_conso_mois
+            name: Ce mois-ci
+            icon: mdi:calendar-month
+            vertical: true
+          # Conso par semaine et par mois = variation de l'index sur chaque période (« change »)
+          - type: statistics-graph
+            title: Conso par semaine (12 semaines)
+            chart_type: bar
+            period: week
+            days_to_show: 84
+            stat_types:
+              - change
+            entities:
+              - sensor.compteur_eau_lora_compteur_eau_volume_total
+          - type: statistics-graph
+            title: Conso par mois (12 mois)
+            chart_type: bar
+            period: month
+            days_to_show: 365
+            stat_types:
+              - change
+            entities:
+              - sensor.compteur_eau_lora_compteur_eau_volume_total
       - type: grid
         cards:
           - type: heading
@@ -163,6 +210,18 @@ views:
             card:
               type: markdown
               content: ✅ **Aucune anomalie détectée**
+          # Journal : début et fin de chaque alerte sur 7 jours
+          - type: logbook
+            title: Historique des alertes (7 jours)
+            hours_to_show: 168
+            target:
+              entity_id:
+                - binary_sensor.compteur_eau_lora_fuite_confirmee
+                - binary_sensor.compteur_eau_lora_fuite_suspectee_nuit
+                - binary_sensor.compteur_eau_lora_debit_anormal
+                - binary_sensor.compteur_eau_lora_conso_journaliere_anormale
+                - binary_sensor.compteur_eau_lora_conso_pendant_absence
+                - binary_sensor.compteur_eau_lora_compteur_silencieux
       - type: grid
         column_span: 2
         cards:
@@ -179,6 +238,16 @@ views:
             hours_to_show: 24
             entities:
               - entity: sensor.compteur_eau_lora_debit_estime
+          # Hier et aujourd'hui côte à côte : conso par heure sur 48 h
+          - type: statistics-graph
+            title: Conso horaire (48 h, hier et aujourd'hui)
+            chart_type: bar
+            period: hour
+            days_to_show: 2
+            stat_types:
+              - change
+            entities:
+              - sensor.compteur_eau_lora_compteur_eau_volume_total
           # Conso par heure = variation de l'index sur chaque heure (« change »).
           # L'ancienne version demandait « state » sur un capteur « measurement » : graphique vide.
           - type: statistics-graph
@@ -213,14 +282,35 @@ views:
       - type: grid
         cards:
           - type: heading
-            heading: Réglages
-            icon: mdi:cog
+            heading: Actions
+            icon: mdi:gesture-tap-button
           - type: tile
             entity: switch.compteur_eau_lora_mode_absence
             name: Mode absence
             icon: mdi:airplane
             features:
               - type: toggle
+          - type: entities
+            title: Écran de la carte
+            show_header_toggle: false
+            entities:
+              - entity: switch.compteur_eau_lora_ecran_extinction_nocturne
+                name: Extinction nocturne
+              - entity: number.compteur_eau_lora_ecran_extinction_a
+                name: Éteint à
+              - entity: number.compteur_eau_lora_ecran_rallumage_a
+                name: Rallumé à
+      - type: grid
+        cards:
+          - type: heading
+            heading: Réglages
+            icon: mdi:cog
+          - type: entities
+            title: Prix de l'eau
+            show_header_toggle: false
+            entities:
+              - entity: number.compteur_eau_lora_prix_de_l_eau_au_m3
+                name: Prix au m³ (sans abonnement)
           - type: entities
             title: Seuils de détection
             show_header_toggle: false
@@ -233,6 +323,8 @@ views:
                 name: Seuil débit anormal
               - entity: number.compteur_eau_lora_seuil_conso_journaliere
                 name: Seuil conso journalière
+              - entity: number.compteur_eau_lora_compteur_silencieux_apres
+                name: Compteur silencieux après
           - type: entities
             title: Export CSV
             show_header_toggle: false
@@ -251,6 +343,8 @@ views:
             entities:
               - entity: sensor.compteur_eau_lora_compteur_eau_statut
                 name: Statut du compteur
+              - entity: sensor.compteur_eau_lora_compteur_eau_derniere_trame
+                name: Dernière trame reçue
               - entity: sensor.compteur_eau_lora_compteur_eau_rssi
                 name: RSSI radio (compteur)
               - entity: sensor.compteur_eau_lora_wifi_rssi

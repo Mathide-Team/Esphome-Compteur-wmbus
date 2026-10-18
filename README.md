@@ -56,10 +56,12 @@ Copie `secrets.example.yaml` en `secrets.yaml` et remplis-le. Les numéros de co
 | Clé | Contenu |
 |---|---|
 | `compteur0` | numéro de **ton** compteur |
-| `compteur1` … `compteurN` | numéros des compteurs voisins (un par voisin déclaré, jusqu'à 10) |
-| `nomcompteur1` … `nomcompteurN` | noms affichés dans HA (ex. `"Dupont"`) |
+| `type_compteur` | facultatif : `dme_07` (défaut, Grand Besançon), `izar` (Grand Belfort) ou `auto`, voir [Izar / DME](#izar--dme) |
+| `aes` | facultatif : clé AES de ton compteur, seulement si l'opérateur chiffre (absente = en clair) |
+| `compteur1` … `compteur10` | facultatifs : un **voisin existe dès que son `compteurN` est présent** |
+| `nomcompteurN`, `aesvN`, `typecompteurN` | facultatifs : nom affiché dans HA, clé AES et type du voisin N |
 
-La configuration fournie déclare 4 voisins. Pour en ajouter, en retirer ou changer le modèle d'un compteur voisin, voir [Voisins](#voisins--de-0-à-10).
+Rien à modifier dans `compteur-eau-lora.yaml` pour les voisins : voir [Voisins](#voisins--de-0-à-10).
 
 ### 2. Premier flash (par USB)
 
@@ -162,13 +164,12 @@ Cette section suit `compteur-eau-lora.yaml` bloc par bloc, dans l'ordre du fichi
 ```yaml
 num_compteur: !secret compteur0
 nom_moi: "Mon compteur"
-nom_v1: !secret nomcompteur1     # compatibilité paquet ntfy (voisins 1 à 4)
-...
 mdi_url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/..."
 ```
 
 - `${num_compteur}` : numéro de ton compteur, lu dans `secrets.yaml`. ESPHome le remplace partout dans le fichier : `meter_id` de `wmbus_meter`, reconnaissance de ton compteur dans `on_frame`, numéro affiché à l'écran.
-- `${nom_v1}`… `${nom_v4}` : gardés seulement pour le paquet ntfy actuel, qui envoie les bilans des voisins 1 à 4. Les voisins eux-mêmes sont déclarés dans `packages:` (voir [Voisins](#voisins--de-0-à-10)).
+- `fuseau`, `bouton_pin` : fuseau de l'heure Internet et broche du bouton de la carte.
+- Les voisins ne sont plus des substitutions : ils sont déclarés dans `packages:` (voir [Voisins](#voisins--de-0-à-10)).
 - `nom_moi` : nom donné à ton propre compteur dans l'événement CSV.
 - `mdi_url` : police d'icônes Material Design, **figée en version 7.4.47** pour que les codes des icônes (`\U000F058C`…) ne changent pas lors d'une mise à jour.
 
@@ -202,9 +203,13 @@ on_boot:
 - `wifi` + `ap` : connexion à ta box. Si elle échoue, le module crée son propre point d'accès (`fallback_hotspot_ssid`).
 - `captive_portal` : sur ce point d'accès de secours, une page web permet de saisir un autre WiFi.
 
-### `time` : l'heure de Home Assistant et les tâches planifiées
+### `time` : l'heure (HA ou Internet) et les tâches planifiées
 
-L'heure vient de HA (`platform: homeassistant`). Deux tâches tournent à heure fixe :
+Deux sources règlent la **même horloge** de l'ESP : Home Assistant (`platform: homeassistant`, id `ha_time`) et l'heure Internet (`platform: sntp`, fuseau `${fuseau}`, `Europe/Paris` par défaut). Dès que l'une des deux a répondu, `id(ha_time).now()` est valide. **Si HA est arrêté**, la conso du jour, la bascule de minuit et l'extinction nocturne de l'écran continuent avec l'heure Internet (il faut seulement le WiFi).
+
+Le SNTP n'a pas d'`id` : si le paquet ntfy déclare aussi une source SNTP, ESPHome fusionne les deux en une seule. Il faut pour cela une version du paquet ntfy dont la source SNTP n'a pas d'`id` non plus (voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy)).
+
+Deux tâches tournent à heure fixe :
 
 **Chaque heure pile** (`minutes: 0, seconds: 0`) :
 1. Conso de l'heure = (index actuel − index au début de l'heure) × 1000 → capteur « Conso dernière heure ».
@@ -226,6 +231,8 @@ L'heure vient de HA (`platform: homeassistant`). Deux tâches tournent à heure 
 | `g_day_start`, `g_day` | 1er index du jour et jour de l'année correspondant | oui |
 | `g_leak_hours`, `g_night_flag` | Heures de conso consécutives, drapeau de fuite de nuit | oui |
 | `g_page` | Page affichée sur l'OLED (0, 1 ou 2) | non |
+| `g_ecran_eteint`, `g_reveil_ms`, `g_pause_ms` | Écran éteint la nuit, réveil par le bouton (60 s), pause de la rotation après un appui (30 s) | non |
+| `g_week_start`, `g_week`, `g_month_start`, `g_month` | 1er index de la semaine (lundi) et du mois, et période correspondante | oui |
 | `vN_total`, `vN_day_start`, `vN_day` | Pareil pour chaque voisin N (index, 1er index du jour, jour), créées par `voisins/voisin.yaml` | oui (sauf `vN_total`) |
 | `g_voisins`, `g_v_infos` | Tables remplies au démarrage par chaque voisin : numéro de compteur → voisin N, et voisin N → nom, index, conso du jour (export CSV) | non |
 | `g_id_off` | Position du numéro de compteur dans l'en-tête des trames (4 ou 6), apprise automatiquement | oui |
@@ -374,66 +381,111 @@ SSD1306 128×64 en I2C à l'adresse `0x3C`, reset sur GPIO21, redessiné toutes 
 
 ## Voisins : de 0 à 10
 
-Chaque voisin est **une ligne** dans `compteur-eau-lora.yaml`, qui inclut le modèle `voisins/voisin.yaml` avec ses variables :
+Les voisins sont **déduits de `secrets.yaml`** : rien à écrire dans `compteur-eau-lora.yaml`. Un voisin N (1 à 10) existe dès que `compteurN` y est présent et non vide :
 
 ```yaml
-packages:
-  voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }
-  voisin2: !include { file: voisins/voisin.yaml, vars: { i: 2, num: !secret compteur2, nom: !secret nomcompteur2 } }
+compteur1: "0x23456789"      # obligatoire pour que le voisin existe
+nomcompteur1: "Dupont"       # facultatif : « Voisin 1 » par défaut
+# aesv1: "…32 hex…"          # facultatif : clé AES de son compteur (absente ou "" = en clair)
+# typecompteur1: "izar"      # facultatif : s'il diffère de type_compteur
 ```
 
-| Variable | Rôle |
+| Entrée | Rôle |
 |---|---|
-| `i` | Numéro du voisin, **de 1 à 10, sans doublon**. Il fixe les identifiants internes (`v1_total`, `compteur_v1`…) : ne le change pas pour un voisin existant, sinon son 1er index du jour mémorisé est perdu |
-| `num` | Numéro du compteur, `"0x12345678"` (secret `compteurN`) |
-| `nom` | Nom affiché dans HA (secret `nomcompteurN`) : entités « Dupont - Index », « Dupont - RSSI », « Dupont - Conso aujourd'hui » |
-| `type` | Facultatif : driver `wmbus_meter` du compteur, `dme_07` par défaut (ex. `type: izar`) |
+| `compteurN` | Numéro du compteur, avec `0x` (ex. `"0x23456789"`), N de 1 à 10. **Garde le même N pour un voisin** : il fixe ses identifiants internes (`v1_total`, `compteur_v1`…) et donc son historique |
+| `nomcompteurN` | Nom affiché dans HA : « Dupont - Index », « Dupont - RSSI », « Dupont - Conso aujourd'hui »… |
+| `aesvN` | Clé AES-128 de son compteur, si l'opérateur chiffre les trames (voir [Izar / DME](#izar--dme)) |
+| `typecompteurN` | Pilote de son compteur, si différent de `type_compteur` |
 
-**Ajouter un voisin** : ajoute `compteurN` et `nomcompteurN` dans `secrets.yaml`, puis une ligne `voisinN` avec le même `i: N`. Recompile et installe (OTA).
+- **Ajouter un voisin** : ajoute `compteurN` (et `nomcompteurN`) dans `secrets.yaml`, puis recompile et installe (OTA).
+- **Retirer un voisin** : supprime ou commente `compteurN`, ou mets-le à `""`. Dans HA, ses entités passent « indisponibles » : supprime-les depuis la page de l'appareil.
+- **Aucun voisin** : aucun `compteurN`.
+- Les emplacements peuvent avoir des trous (voisins 1, 2 et 5 par exemple).
 
-**Retirer un voisin** : supprime sa ligne. Ses secrets peuvent rester. Dans HA, ses entités passent « indisponibles » : supprime-les depuis la page de l'appareil.
+Comment ça marche : `compteur-eau-lora.yaml` fusionne `secrets.yaml` dans ses `substitutions` (`<<: !include secrets.yaml`). [`voisins/voisins.yaml`](voisins/voisins.yaml) prévoit alors 10 emplacements, et chacun n'inclut le modèle [`voisins/voisin.yaml`](voisins/voisin.yaml) que si son `compteurN` existe. Ce sont les paquets conditionnels d'ESPHome (expressions Jinja, ESPHome ≥ 2025.x). Les valeurs restent masquées dans « Validate » et `esphome config`, comme avec `!secret`.
 
-**Aucun voisin** : supprime toutes les lignes `voisinN` et remplace `packages:` par `packages: {}`.
+> **Mise à jour depuis la version avec une ligne par voisin** : remplace les lignes `voisinN: !include …` par `voisins: !include voisins/voisins.yaml` (déjà fait dans ce fichier). Ton `secrets.yaml` ne change pas : `compteur1`… `compteur4` et `nomcompteur1`… `nomcompteur4` y sont déjà, avec les mêmes N. L'historique est donc conservé. La déclaration à la main reste possible, **à la place** de `voisins/voisins.yaml` (pas en plus) : `voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }`.
 
-> Paquet ntfy : sa version actuelle envoie les bilans des voisins **1 à 4** et lit `nom_v1`… `nom_v4` dans `substitutions`. Garde ces 4 voisins (et ces substitutions) tant que tu l'utilises ; le passage du paquet aux voisins dynamiques est suivi dans [Esphome-Compteur-wmbus-ntfy#5](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy/issues/5).
+> Paquet ntfy : chaque voisin y reçoit son bilan et les alertes de son compteur sur son sujet `ntfy_topic_vN`, également déduit de `secrets.yaml`. Voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy).
 
 ### Dans ESPHome Builder
 
-ESPHome Builder (module complémentaire de Home Assistant, ou tableau de bord ESPHome) range ses fichiers dans le dossier `esphome` de la configuration HA (`/config/esphome/`). Son éditeur ne modifie que les fichiers d'appareils et ne sait pas créer de dossier. Deux façons de fournir `voisins/voisin.yaml` :
+ESPHome Builder (module complémentaire de Home Assistant, ou tableau de bord ESPHome) range ses fichiers dans le dossier `esphome` de la configuration HA (`/config/esphome/`). Son éditeur ne modifie que les fichiers d'appareils et ne sait pas créer de dossier. Les voisins se gèrent **uniquement dans les secrets** (bouton **Secrets** en haut à droite du Builder). Il reste à fournir les fichiers des dossiers `voisins/` et `options/`, de l'une des deux façons suivantes.
 
-**Option A : copier le fichier (hors ligne, version figée)**
+**Option A : copier les fichiers (hors ligne, version figée)**
 
 1. Installe un module d'accès aux fichiers : **File editor** ou **Studio Code Server** (Paramètres → Modules complémentaires → Boutique), ou le partage réseau **Samba share**.
-2. Dans le dossier `esphome`, crée le dossier **`voisins`**, puis le fichier **`voisins/voisin.yaml`** avec le contenu de [voisins/voisin.yaml](voisins/voisin.yaml).
+2. Dans le dossier `esphome`, crée les dossiers **`voisins`** et **`options`**, puis copie [voisins/voisins.yaml](voisins/voisins.yaml), [voisins/voisin.yaml](voisins/voisin.yaml), [voisins/cle.yaml](voisins/cle.yaml) et [options/izar.yaml](options/izar.yaml).
 3. Vérifie l'arborescence :
    ```
    esphome/
    ├── compteur-eau-lora.yaml
    ├── secrets.yaml
+   ├── options/
+   │   └── izar.yaml
    └── voisins/
-       └── voisin.yaml
+       ├── cle.yaml
+       ├── voisin.yaml
+       └── voisins.yaml
    ```
-   Le Builder n'affiche que les fichiers à la racine de `esphome/` : le modèle, rangé dans `voisins/`, n'apparaît pas comme un faux appareil.
-4. Dans le Builder, ouvre `compteur-eau-lora` → **Edit**, ajuste les lignes `voisinN`, puis **Validate** et **Install → Wirelessly**.
+   Le Builder n'affiche que les fichiers à la racine de `esphome/` : les modèles, rangés dans des sous-dossiers, n'apparaissent pas comme de faux appareils.
+4. Dans le Builder : **Secrets** pour les voisins, puis `compteur-eau-lora` → **Validate** et **Install → Wirelessly**.
 
-Le Builder a aussi son propre `secrets.yaml` (bouton **Secrets** en haut à droite) : c'est là que vont `compteur5`, `nomcompteur5`…
+**Option B : charger les modèles depuis GitHub (aucun fichier à copier)**
 
-**Option B : charger le modèle depuis GitHub (aucun fichier à copier)**
-
-`voisins/voisin.yaml` ne contient aucun secret : ESPHome peut le télécharger. Remplace chaque ligne `voisinN` par :
+Ces fichiers ne contiennent aucun secret : ESPHome peut les télécharger. Dans `compteur-eau-lora.yaml`, remplace la ligne `voisins: !include voisins/voisins.yaml` de `packages:` par :
 
 ```yaml
 packages:
-  voisin1:
+  voisins:
     url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus
-    ref: main            # ou un tag de version, pour figer le modèle
+    ref: main            # ou un tag de version, pour figer les modèles
     refresh: 1d
-    files:
-      - path: voisins/voisin.yaml
-        vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 }
+    files: [voisins/voisins.yaml]
 ```
 
-Les secrets restent dans ton `secrets.yaml` : seules les variables locales leur font référence. Il faut un accès Internet à la compilation.
+Ce seul paquet suffit : il apporte aussi `voisin.yaml`, `cle.yaml` et `options/izar.yaml`, pris dans le même dépôt (testé).
+
+Les secrets restent dans ton `secrets.yaml`. Il faut un accès Internet à la compilation.
+
+## Izar / DME
+
+Les deux familles viennent de Diehl Metering et portent le même code fabricant `DME` dans l'en-tête radio, mais elles n'utilisent **pas le même pilote** :
+
+| | DME | Izar |
+|---|---|---|
+| Collectivité (retours connus) | **Grand Besançon** | **Grand Belfort** |
+| `type_compteur` | `dme_07` (défaut) | `izar` |
+| Version dans l'en-tête radio | `0x7b` | `0x78` |
+| Protection | wM-Bus / OMS, **en clair** à ce jour | brouillage PRIOS, décodé par le pilote avec les clés Diehl par défaut : **en clair** à ce jour |
+| Champ « Statut » | `status` | `current_alarms` (`no_alarm`, `leakage`, `meter_blocked`…) |
+| Capteurs en plus | — | index fin du mois dernier, durée de vie de la pile, période d'émission, alarmes précédentes (ajoutés automatiquement, [options/izar.yaml](options/izar.yaml)) |
+
+Champs relevés dans `driver_dme_07.cpp` et `driver_izar.cpp` du composant [SzczepanLeon/esphome-components](https://github.com/SzczepanLeon/esphome-components) (commit `d9abe6f`).
+
+**Réglage**, dans `secrets.yaml` :
+
+```yaml
+type_compteur: "izar"     # dme_07 (défaut, Besançon) | izar (Belfort) | auto
+```
+
+- `type_compteur` s'applique à ton compteur et, par défaut, à tous les voisins. Un voisin d'une autre famille prend `typecompteurN`.
+- `auto` laisse le composant choisir le pilote à chaque trame. C'est pratique pour un mélange, mais les champs propres à un pilote, comme « Statut », peuvent manquer.
+- **Dans le doute**, regarde les journaux : chaque trame entendue y est classée `DME` (version `7B`) ou `Izar` (version `78`), y compris pour les compteurs inconnus :
+  ```
+  [D][csv] Compteur 23456789 (connu, Izar, version 78) RSSI -83 dBm | …
+  ```
+
+**Clé AES**, seulement si l'opérateur chiffre les trames, ce qui n'est pas le cas aujourd'hui à Besançon ni à Belfort :
+
+```yaml
+aes: "00112233445566778899AABBCCDDEEFF"     # ton compteur (32 caractères hexadécimaux)
+aesv1: "…"                                  # voisin 1, aesv2 pour le voisin 2…
+```
+
+- Absente ou `""` : trames lues en clair. Il n'y a rien à créer si tu n'en as pas besoin.
+- La clé appartient à l'abonné ou à l'opérateur. Ne la publie jamais, et n'utilise celle d'un voisin qu'avec son accord écrit.
+- Si l'opérateur active le chiffrement, ou change la clé PRIOS d'Izar, **les voisins sans clé tombent** : leurs trames ne sont plus décodées. Ils repassent alors en « inconnu », avec le numéro et le RSSI, sans index. Ton compteur reste lisible avec ta propre clé.
 
 ## Entités Home Assistant
 
@@ -447,12 +499,27 @@ Les secrets restent dans ton `secrets.yaml` : seules les variables locales leur 
 | Débit estimé | L/h, calculé entre deux trames espacées d'au moins 120 s |
 | Conso dernière heure | L, mise à jour toutes les heures pile |
 | Conso aujourd'hui / Conso hier | L (voir plus bas) |
+| Conso semaine / Conso mois | L depuis lundi / depuis le 1er du mois (1er index reçu de la période, gardé au redémarrage) |
+| Prix de l'eau au m³ | Réglage (€/m³, abonnement non compris), voir [Prix de l'eau](#prix-de-leau) |
+| Prix de l'eau | Même valeur en capteur (`EUR/m³`), pour le tableau de bord Énergie |
+| Coût aujourd'hui / Coût mois | € = conso × prix au m³ |
+| Compteur eau - Dernière trame | Heure de la dernière trame décodée (HA affiche « il y a 3 minutes ») |
 | Heures de conso continue | Nombre d'heures consécutives avec consommation |
-| Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière | Seuils réglables depuis HA |
+| Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière, Compteur silencieux après | Seuils réglables depuis HA (communs à ton compteur et aux voisins ; silencieux : 6 h par défaut) |
 | Mode absence | Interrupteur |
+| Écran - extinction nocturne, Écran - extinction à, Écran - rallumage à | Interrupteur et heures (0 à 23) de l'extinction de l'OLED, 22 h → 7 h par défaut |
+| Bouton de la carte | État du bouton PRG (diagnostic) |
 | 6 capteurs « problème » | Voir [Alertes](#détection-de-fuite-et-alertes) |
 
-**Chaque voisin déclaré** (nom = `nomcompteurN`) : `Nom - Index` (m³), `Nom - Conso aujourd'hui` (L), `Nom - RSSI` (diagnostic).
+**Chaque voisin déclaré** (nom = `nomcompteurN`) :
+
+| Entité | Description |
+|---|---|
+| Nom - Index | m³ |
+| Nom - Conso aujourd'hui | L |
+| Nom - Débit estimé | L/h, entre deux trames espacées d'au moins 120 s |
+| Nom - RSSI, Nom - Dernière trame | Diagnostic |
+| Nom - Fuite confirmée, Fuite suspectée (nuit), Débit anormal, Conso journalière anormale, Compteur silencieux | Les mêmes alertes que pour ton compteur, avec les **mêmes seuils** (pas de mode absence pour les voisins) |
 
 ## Calcul de la conso du jour
 
@@ -479,9 +546,21 @@ Simulation des pages : index et conso du jour, signaux WiFi et radio, alertes (2
 2. **Signaux** WiFi et wM-Bus : barres (4 niveaux) et dBm. Seuils WiFi : -55 / -67 / -75 / -85 dBm. Seuils radio : -60 / -75 / -90 / -100 dBm.
 3. **Alertes actives** (jusqu'à 4 lignes, puis « +N autres »). Cette page est sautée s'il n'y a aucune alerte.
 
+### Extinction la nuit et bouton
+
+**Extinction la nuit** : l'écran s'éteint de **22 h à 7 h** par défaut, pour ménager l'OLED. Règle les heures dans le tableau de bord (carte Actions → Écran de la carte) ou sur la page de l'appareil :
+- « Écran - extinction à » (début, inclus) et « Écran - rallumage à » (fin, exclue). La plage peut passer minuit (22 → 7) ou non (13 → 14). Si les deux heures sont égales, l'écran ne s'éteint jamais ;
+- « Écran - extinction nocturne » : coupe la fonction (écran toujours allumé).
+
+Si l'ESP ne connaît pas l'heure (ni HA ni Internet), l'écran reste allumé.
+
+**Bouton PRG** (GPIO0, substitution `bouton_pin`) :
+- appui le jour : page suivante, et rotation automatique suspendue 30 s pour lire la page ;
+- appui la nuit : rallume l'écran 60 s, sur la page en cours.
+
 ## Détection de fuite et alertes
 
-Uniquement pour le compteur de la maison.
+Pour ton compteur **et pour chaque voisin déclaré** : mêmes règles, mêmes seuils. Le mode absence ne concerne que ton compteur.
 
 | Alerte | Se déclenche quand |
 |---|---|
@@ -490,9 +569,11 @@ Uniquement pour le compteur de la maison.
 | Débit anormal | Débit estimé supérieur à `Seuil débit anormal` (1000 L/h par défaut) pendant 10 min |
 | Conso journalière anormale | Conso du jour supérieure à `Seuil conso journalière` (800 L par défaut) |
 | Conso pendant absence | `Mode absence` activé et au moins 1 L consommé pendant l'heure écoulée |
-| Compteur silencieux | Aucune trame reçue depuis plus de 6 h |
+| Compteur silencieux | Aucune trame reçue depuis plus de `Compteur silencieux après` heures (6 par défaut). Il faut avoir reçu au moins une trame depuis le démarrage de l'ESP |
 
 La résolution de l'index est de 1 L : le débit estimé est donc grossier pour les petits débits.
+
+Les alertes d'un voisin s'appellent « Dupont - Fuite confirmée »… Le paquet ntfy peut les envoyer sur le sujet de ce voisin (voir [Esphome-Compteur-wmbus-ntfy#5](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy/issues/5)).
 
 ## Tableau de bord Énergie (eau)
 
@@ -550,6 +631,26 @@ La configuration écrit donc l'unité en dur sur les 5 index et les 5 RSSI :
 | Pic énorme un jour donné | Une trame mal décodée a fait baisser puis remonter l'index : corriger la valeur dans Outils de développement → Statistiques |
 | Entité absente de l'historique | Exclue du `recorder` dans `configuration.yaml`, ou désactivée |
 
+## Prix de l'eau
+
+Règle **« Prix de l'eau au m³ »** (Réglages du tableau de bord, ou page de l'appareil) avec le prix d'un m³ supplémentaire, **abonnement non compris** : eau potable + assainissement + redevances, TTC. C'est ce prix qui compte pour le coût d'un litre consommé. L'abonnement est fixe : il ne dépend pas de la conso.
+
+Exemple : Grand Besançon Métropole, tarif unique des régies au 1er janvier 2026, tranche 3,1 à 100 m³ ([rapport sur le prix et la qualité des services 2025, conseil communautaire du 24 septembre 2026](https://datasets.grandbesancon.fr/fichiers/delibs/grandBesancon/conseilCommunautaire/2026/20260924/0000C9DA.PDF)) :
+
+| Part | Prix HT | TVA | Prix TTC |
+|---|---|---|---|
+| Eau potable : part variable 1,38 + redevances « préservation de la ressource » 0,065, « consommation eau potable » 0,39 et « performance des réseaux » 0,03 | 1,865 €/m³ | 5,5 % | ≈ 1,97 €/m³ |
+| Assainissement collectif : part variable 1,66 + redevance « performance des systèmes d'assainissement » 0,04 | 1,70 €/m³ | 10 % | ≈ 1,87 €/m³ |
+| **Total** | | | **≈ 3,84 €/m³** |
+
+Le même rapport donne 4,04 € TTC/m³ pour une facture type de 120 m³, abonnements compris (484,23 €). Les 3 premiers m³ par an sont gratuits pour les ménages. Les communes encore en délégation de service public peuvent avoir un autre tarif.
+
+**Autres communes** : l'observatoire national des services d'eau et d'assainissement (SISPEA) publie en [données ouvertes](https://www.services.eaufrance.fr/pro/telechargement) les indicateurs de chaque service, dont le prix TTC au m³ pour 120 m³ (indicateur D102.0 pour l'eau potable). Ces données ont un an de décalage, et c'est un prix moyen abonnement compris. Pour un prix exact, prends le prix variable de ta facture ou du rapport annuel de ta collectivité.
+
+**Tableau de bord Énergie** : Paramètres → Tableaux de bord → Énergie → Consommation d'eau → ton index → **Utiliser une entité avec le prix actuel** → `Prix de l'eau` (capteur en `EUR/m³`). Tu peux aussi choisir un prix fixe.
+
+**Conso semaine et mois** : calculées par l'ESP, comme la conso du jour (1er index reçu depuis lundi ou depuis le 1er du mois). Pas besoin de `configuration.yaml` ni de compteur de services publics. Les graphiques « par semaine » et « par mois » utilisent, eux, les statistiques de l'index.
+
 ## Tableau de bord « Compteur d'eau »
 
 En plus du tableau de bord Énergie, `ha_dashboard_compteur_eau.yaml` décrit un tableau de bord dédié (vue « Eau », en sections) :
@@ -557,10 +658,12 @@ En plus du tableau de bord Énergie, `ha_dashboard_compteur_eau.yaml` décrit un
 | Section | Contenu |
 |---|---|
 | En direct | Jauges du débit estimé (vert < 300 L/h < orange < 1000 L/h < rouge) et de la conso du jour (vert < 500 L < orange < 800 L < rouge), tuiles index / dernière heure / hier / heures continues |
-| Alertes | Une tuile par alerte active, sinon « ✅ Aucune anomalie détectée » |
-| Historique | Conso du jour et débit sur 24 h, conso **par heure** sur 7 jours, conso **par jour** sur 30 jours, index sur 30 jours |
-| Réglages | Mode absence, seuils de détection, export CSV (activation et intervalle) |
-| Diagnostic | Statut du compteur, RSSI radio et WiFi, compteur silencieux |
+| Coûts et périodes | Coût du jour et du mois, conso de la semaine et du mois, conso **par semaine** (12 semaines) et **par mois** (12 mois) |
+| Alertes | Une tuile par alerte active, sinon « ✅ Aucune anomalie détectée », puis le **journal des alertes** sur 7 jours (début et fin de chaque alerte) |
+| Historique | Conso du jour et débit sur 24 h, conso **par heure sur 48 h** (hier et aujourd'hui côte à côte), par heure sur 7 jours, **par jour** sur 30 jours, index sur 30 jours |
+| Actions | Mode absence (+ boutons ntfy dans le tableau de bord généré, si le paquet est installé) |
+| Réglages | Prix de l'eau au m³, seuils de détection, export CSV (activation et intervalle) |
+| Diagnostic | Statut du compteur, dernière trame reçue, RSSI radio et WiFi, compteur silencieux |
 | Signal | Courbe du RSSI radio et WiFi sur 24 h |
 
 ### Générer le tableau de bord avec tes voisins
@@ -570,7 +673,7 @@ En plus du tableau de bord Énergie, `ha_dashboard_compteur_eau.yaml` décrit un
 | Section | Contenu |
 |---|---|
 | Tous les compteurs | Conso par jour sur 30 jours (toi + chaque voisin, en barres), RSSI radio de tous les compteurs sur 24 h |
-| Une section par voisin | Index, conso du jour, signal radio, conso par jour sur 30 jours |
+| Une section par voisin | Index, conso du jour, signal radio, dernière trame, débit, ses 5 alertes, conso par jour sur 30 jours |
 
 Depuis la racine du dépôt, à côté de ton `secrets.yaml` :
 
@@ -578,6 +681,10 @@ Depuis la racine du dépôt, à côté de ton `secrets.yaml` :
 uv run --with pyyaml python scripts/generer_tableau_de_bord.py
 # ou : pip install pyyaml && python3 scripts/generer_tableau_de_bord.py
 ```
+
+Il ajuste aussi :
+- **les jauges** : max et paliers calculés à partir des seuils d'alerte (débit : orange à 30 % du seuil, rouge au seuil, max à 150 % ; conso du jour : orange à 62,5 %, rouge au seuil, max à 125 %). Il prend les valeurs initiales de la configuration. Si tu as changé un seuil dans HA, passe-le avec `--seuil-debit 1500` ou `--seuil-jour 600` ;
+- **la carte Actions** : interrupteur et boutons ntfy (message de test, envoi des bilans), seulement si le paquet ntfy est inclus dans `packages:`.
 
 Le script écrit `ha_dashboard_compteur_eau.genere.yaml`, ignoré par git car il contient les noms des voisins. Relance-le après chaque ajout ou retrait de voisin. Options : `--config`, `--secrets`, `--sortie`, et `--appareil` si ton appareil n'a plus le nom `Compteur Eau LoRa` dans HA.
 
@@ -619,16 +726,22 @@ Exemple avec des numéros fictifs. Pour les compteurs **inconnus**, seuls le num
 Le dépôt compagnon **[Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy)** ajoute des notifications push [ntfy](https://ntfy.sh). L'ESP les envoie **lui-même** en HTTPS : elles ne passent ni par Home Assistant, ni par `notify`, ni par MQTT.
 
 - **Toi** : alertes (fuite confirmée, fuite de nuit, débit anormal, conso élevée, conso pendant une absence, compteur silencieux), fins d'alerte et bilan quotidien. Elles arrivent même si Home Assistant est arrêté.
-- **Chaque voisin** : bilan quotidien de **son** compteur (conso du jour + index) sur **son** sujet ntfy. Il le lit dans l'appli ntfy (Android, iOS, navigateur) ou dans sa propre domotique (Home Assistant, Jeedom, Domoticz, openHAB, Node-RED… : tout ce qui sait lire un flux HTTP JSON, SSE ou WebSocket). Un voisin n'a besoin d'**aucune** installation chez lui.
+- **Chaque voisin** : bilan quotidien de **son** compteur (conso du jour + index) et alertes de **son** compteur (fuite, débit, conso élevée, compteur silencieux) sur **son** sujet ntfy. Il le lit dans l'appli ntfy (Android, iOS, navigateur) ou dans sa propre domotique (Home Assistant, Jeedom, Domoticz, openHAB, Node-RED… : tout ce qui sait lire un flux HTTP JSON, SSE ou WebSocket). Un voisin n'a besoin d'**aucune** installation chez lui.
 
 Mise en place, en résumé :
 
-1. Un sujet aléatoire par personne dans `secrets.yaml` (`ntfy_topic_moi`, `ntfy_topic_v1` … `ntfy_topic_v4`, `""` = rien). Sur ntfy.sh, **le nom du sujet sert de mot de passe**.
-2. Ces sujets ajoutés aux `substitutions` de `compteur-eau-lora.yaml`.
-3. Le paquet ajouté à la configuration, sans rien modifier d'autre :
+1. Un sujet aléatoire par personne dans `secrets.yaml` (`ntfy_topic_moi`, `ntfy_topic_v1`…, `""` = rien). Sur ntfy.sh, **le nom du sujet sert de mot de passe**.
+2. `ntfy_topic_moi: !secret ntfy_topic_moi` ajouté aux `substitutions` de `compteur-eau-lora.yaml`.
+3. Le paquet, puis une ligne par voisin (même `i` que sa ligne `voisins/voisin.yaml`), ajoutés à `packages:` :
    ```yaml
    packages:
      ntfy: github://Mathide-Team/Esphome-Compteur-wmbus-ntfy/ntfy.yaml@main
+     ntfy_voisin1:
+       url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy
+       ref: main
+       files:
+         - path: ntfy-voisin.yaml
+           vars: { i: 1, nom: !secret nomcompteur1, topic: !secret ntfy_topic_v1 }
    ```
 4. Flash, puis bouton **« ntfy - message de test »**.
 

@@ -503,6 +503,7 @@ aesv1: "…"                                  # voisin 1, aesv2 pour le voisin 2
 | Prix de l'eau au m³ | Réglage (€/m³, abonnement non compris), voir [Prix de l'eau](#prix-de-leau) |
 | Prix de l'eau | Même valeur en capteur (`EUR/m³`), pour le tableau de bord Énergie |
 | Coût aujourd'hui / Coût mois | € = conso × prix au m³ |
+| Coût hier, Coût cette semaine, Coût semaine dernière, Coût mois dernier | € = conso de la période × prix au m³ ; la conso d'hier et celle des périodes écoulées sont mémorisées (redémarrable) |
 | Compteur eau - Dernière trame | Heure de la dernière trame décodée (HA affiche « il y a 3 minutes ») |
 | Heures de conso continue | Nombre d'heures consécutives avec consommation |
 | Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière, Compteur silencieux après | Seuils réglables depuis HA (communs à ton compteur et aux voisins ; silencieux : 6 h par défaut) |
@@ -658,7 +659,7 @@ En plus du tableau de bord Énergie, `ha_dashboard_compteur_eau.yaml` décrit un
 | Section | Contenu |
 |---|---|
 | En direct | Jauges du débit estimé (vert < 300 L/h < orange < 1000 L/h < rouge) et de la conso du jour (vert < 500 L < orange < 800 L < rouge), tuiles index / dernière heure / hier / heures continues |
-| Coûts et périodes | Coût du jour et du mois, conso de la semaine et du mois, conso **par semaine** (12 semaines) et **par mois** (12 mois) |
+| Coûts et périodes | Coût d'aujourd'hui, d'hier, du mois, du mois dernier, de cette semaine et de la semaine dernière, conso de la semaine et du mois, conso **par semaine** (12 semaines) et **par mois** (12 mois) |
 | Alertes | Une tuile par alerte active, sinon « ✅ Aucune anomalie détectée », puis le **journal des alertes** sur 7 jours (début et fin de chaque alerte) |
 | Historique | Conso du jour et débit sur 24 h, conso **par heure sur 48 h** (hier et aujourd'hui côte à côte), par heure sur 7 jours, **par jour** sur 30 jours, index sur 30 jours |
 | Actions | Mode absence (+ boutons ntfy dans le tableau de bord généré, si le paquet est installé) |

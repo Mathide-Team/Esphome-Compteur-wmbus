@@ -81,9 +81,29 @@ views:
             icon: mdi:cash
             vertical: true
           - type: tile
+            entity: sensor.compteur_eau_lora_cout_hier
+            name: Coût hier
+            icon: mdi:cash-clock
+            vertical: true
+          - type: tile
             entity: sensor.compteur_eau_lora_cout_mois
             name: Coût du mois
             icon: mdi:cash-multiple
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_cout_mois_dernier
+            name: Coût mois dernier
+            icon: mdi:cash-refund
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_cout_semaine
+            name: Coût cette semaine
+            icon: mdi:cash-plus
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_cout_semaine_derniere
+            name: Coût semaine dernière
+            icon: mdi:cash-minus
             vertical: true
           - type: tile
             entity: sensor.compteur_eau_lora_conso_semaine

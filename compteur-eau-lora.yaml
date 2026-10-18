@@ -37,9 +37,17 @@ substitutions:
 # ── Voisins (déduits de secrets.yaml : compteur1 … compteur10), clé AES et capteurs Izar de ton
 #    compteur : tout passe par voisins/voisins.yaml, selon les entrées présentes dans secrets.yaml.
 # Ajouter un voisin : compteurN (et nomcompteurN) dans secrets.yaml. Retirer : supprimer compteurN.
-# ESPHome Builder, ou modèles chargés depuis GitHub sans copier de fichier : voir README, « Voisins ».
+# Modèles (voisins/, options/) chargés depuis GitHub : aucun fichier à copier, ni en ligne de
+# commande ni dans ESPHome Builder (issue #36). Ils ne contiennent aucun secret. Accès Internet
+# nécessaire à la compilation. Hors ligne, ou avec des modèles modifiés : remplacer ce bloc par
+#   voisins: !include voisins/voisins.yaml
+# (voir README, « Voisins », option B).
 packages:
-  voisins: !include voisins/voisins.yaml
+  voisins:
+    url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus
+    ref: main            # ou un tag de version, pour figer les modèles
+    refresh: 1d
+    files: [voisins/voisins.yaml]
 
 esphome:
   name: compteur-eau-lora

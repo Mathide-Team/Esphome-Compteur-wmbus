@@ -5,7 +5,8 @@
 
 Les voisins sont déduits de secrets.yaml (voisins/voisins.yaml) : le script écrit
 ci-secrets-N.yaml (secrets.example.yaml sans ses voisins, plus N voisins de test) et une copie
-de compteur-eau-lora.yaml qui fusionne ce fichier au lieu de secrets.yaml. Avec N = 10, il teste
+de compteur-eau-lora.yaml qui fusionne ce fichier au lieu de secrets.yaml et inclut les modèles
+locaux (ceux de la branche) au lieu du paquet GitHub. Avec N = 10, il teste
 aussi les entrées facultatives : type_compteur izar, clés AES, typecompteurN, n° sans « 0x ».
 Les fichiers produits ne sont pas versionnés (.gitignore).
 """
@@ -23,6 +24,12 @@ FUSION = "  <<: !include secrets.yaml\n"
 source = (racine / "compteur-eau-lora.yaml").read_text(encoding="utf-8")
 if FUSION not in source:
     sys.exit("compteur-eau-lora.yaml : ligne « <<: !include secrets.yaml » introuvable")
+# Modèles chargés depuis GitHub (ref main) par défaut (issue #36) : la CI valide ceux de la
+# branche testée, inclus localement à la place du paquet distant.
+DISTANT = re.compile(r"^  voisins:\n    url: https://github\.com/Mathide-Team/Esphome-Compteur-wmbus\n(?:    .*\n)+", re.M)
+if not DISTANT.search(source):
+    sys.exit("compteur-eau-lora.yaml : paquet « voisins » (url GitHub) introuvable")
+source = DISTANT.sub("  voisins: !include voisins/voisins.yaml\n", source, count=1)
 (racine / f"ci-voisins-{n}.yaml").write_text(
     source.replace(FUSION, f"  <<: !include ci-secrets-{n}.yaml\n", 1), encoding="utf-8"
 )

@@ -75,25 +75,56 @@ views:
           - type: heading
             heading: Coûts et périodes
             icon: mdi:currency-eur
+          # Période en cours à gauche, période précédente à droite (coût au prix « Prix de l'eau »)
           - type: tile
             entity: sensor.compteur_eau_lora_cout_aujourd_hui
             name: Coût aujourd'hui
-            icon: mdi:cash
+            icon: mdi:calendar-today
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_cout_hier
+            name: Coût hier
+            icon: mdi:calendar-arrow-left
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_cout_semaine
+            name: Coût cette semaine
+            icon: mdi:calendar-week
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_cout_semaine_derniere
+            name: Coût semaine dernière
+            icon: mdi:calendar-week-begin
             vertical: true
           - type: tile
             entity: sensor.compteur_eau_lora_cout_mois
             name: Coût du mois
-            icon: mdi:cash-multiple
+            icon: mdi:calendar-month
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_cout_mois_dernier
+            name: Coût mois dernier
+            icon: mdi:calendar-month-outline
             vertical: true
           - type: tile
             entity: sensor.compteur_eau_lora_conso_semaine
-            name: Cette semaine
-            icon: mdi:calendar-week
+            name: Conso cette semaine
+            icon: mdi:water
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_conso_semaine_derniere
+            name: Conso semaine dernière
+            icon: mdi:water-outline
             vertical: true
           - type: tile
             entity: sensor.compteur_eau_lora_conso_mois
-            name: Ce mois-ci
-            icon: mdi:calendar-month
+            name: Conso du mois
+            icon: mdi:water
+            vertical: true
+          - type: tile
+            entity: sensor.compteur_eau_lora_conso_mois_dernier
+            name: Conso mois dernier
+            icon: mdi:water-outline
             vertical: true
           # Conso par semaine et par mois = variation de l'index sur chaque période (« change »)
           - type: statistics-graph

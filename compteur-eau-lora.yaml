@@ -28,6 +28,8 @@ substitutions:
   # Numéro de TON compteur (secret compteur0, au format "0x12345678", entre guillemets).
   # Sert au récepteur wM-Bus et à l'écran 1 (affiché sans le « 0x »)
   num_compteur: !secret compteur0
+  # Lundi de la semaine en cours, en jours depuis le 1/1/1970 (date locale ; « now » = id(ha_time).now())
+  lundi_actuel: "([](int a, int m, int j) { a -= m <= 2; int e = (a >= 0 ? a : a - 399) / 400; int ae = a - e * 400; int jda = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + j - 1; return e * 146097 + ae * 365 + ae / 4 - ae / 100 + jda - 719468; }(now.year, now.month, now.day_of_month) - (now.day_of_week + 5) % 7)"
   nom_moi: "Mon compteur"   # nom écrit dans le CSV pour ton propre compteur
   fuseau: "Europe/Paris"   # fuseau horaire de l'heure Internet (SNTP), utilisé si HA est arrêté
   bouton_pin: GPIO0        # bouton PRG de la carte (brochage Heltec V3/V4) : page suivante, réveil de l'écran
@@ -124,7 +126,20 @@ time:
               int veille = ESPTime::from_epoch_local(now.timestamp - 3600).day_of_year;
               if (id(g_day) == veille && id(g_total) > 0 && id(g_day_start) > 0)
                 id(conso_hier_l).publish_state((id(g_total) - id(g_day_start)) * 1000.0);
+              // Lundi ou 1er du mois : la semaine ou le mois qui se termine est figé (« dernier »),
+              // depuis le 1er index de la période jusqu'au dernier index reçu.
+              if (now.day_of_week == 2 && id(g_week) >= 0 && id(g_week_start) > 0 && id(g_total) >= id(g_week_start)) {
+                id(g_week_prev_l) = (id(g_total) - id(g_week_start)) * 1000.0;
+                id(g_week_prev) = id(g_week);
+              }
+              if (now.day_of_month == 1 && id(g_month) >= 0 && id(g_month_start) > 0 && id(g_total) >= id(g_month_start)) {
+                id(g_month_prev_l) = (id(g_total) - id(g_month_start)) * 1000.0;
+                id(g_month_prev) = id(g_month);
+              }
               id(conso_jour_l).update();
+              id(conso_semaine_l).update();
+              id(conso_semaine_derniere_l).update();
+              id(conso_mois_dernier_l).update();
               // (chaque voisin met à jour sa propre conso du jour : voisins/voisin.yaml)
 
 
@@ -166,6 +181,22 @@ globals:
     restore_value: yes
     initial_value: '0'
   - id: g_month
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+  - id: g_week_prev_l    # conso de la semaine dernière (L), figée le lundi à minuit
+    type: float
+    restore_value: yes
+    initial_value: '0'
+  - id: g_week_prev      # lundi de cette semaine-là (jours depuis le 1/1/1970), -1 = inconnue
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+  - id: g_month_prev_l   # conso du mois dernier (L), figée le 1er à minuit
+    type: float
+    restore_value: yes
+    initial_value: '0'
+  - id: g_month_prev     # mois correspondant (année × 12 + mois), -1 = inconnu
     type: int
     restore_value: yes
     initial_value: '-1'
@@ -513,8 +544,20 @@ sensor:
     update_interval: 60s
     lambda: |-
       auto now = id(ha_time).now();
-      if (!now.is_valid() || id(g_week) < 0 || id(g_total) <= 0 || id(g_week_start) <= 0) return 0.0f;
+      if (!now.is_valid() || id(g_week) != ${lundi_actuel} || id(g_total) <= 0 || id(g_week_start) <= 0)
+        return 0.0f;
       return (float) ((id(g_total) - id(g_week_start)) * 1000.0);
+  - platform: template
+    id: conso_semaine_derniere_l
+    name: "Conso semaine dernière"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: |-
+      // Inconnue si l'ESP n'a pas suivi la semaine précédente jusqu'au lundi minuit
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(g_week_prev) != ${lundi_actuel} - 7) return NAN;
+      return id(g_week_prev_l);
   - platform: template
     id: conso_mois_l
     name: "Conso mois"
@@ -527,6 +570,16 @@ sensor:
       if (!now.is_valid() || id(g_month) != now.year * 12 + now.month || id(g_total) <= 0 || id(g_month_start) <= 0)
         return 0.0f;
       return (float) ((id(g_total) - id(g_month_start)) * 1000.0);
+  - platform: template
+    id: conso_mois_dernier_l
+    name: "Conso mois dernier"
+    unit_of_measurement: "L"
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: |-
+      auto now = id(ha_time).now();
+      if (!now.is_valid() || id(g_month_prev) != now.year * 12 + now.month - 1) return NAN;
+      return id(g_month_prev_l);
   - platform: template
     id: cout_jour
     name: "Coût aujourd'hui"
@@ -547,6 +600,47 @@ sensor:
     lambda: |-
       if (!id(conso_mois_l).has_state()) return 0.0f;
       return id(conso_mois_l).state / 1000.0f * id(prix_m3).state;
+  # Coûts au prix fixe « Prix de l'eau » (sans tranches) ; inconnus tant que la période n'est pas suivie
+  - platform: template
+    id: cout_hier
+    name: "Coût hier"
+    device_class: monetary
+    unit_of_measurement: "€"
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      if (!id(conso_hier_l).has_state() || std::isnan(id(conso_hier_l).state)) return NAN;
+      return id(conso_hier_l).state / 1000.0f * id(prix_m3).state;
+  - platform: template
+    id: cout_semaine
+    name: "Coût semaine"
+    device_class: monetary
+    unit_of_measurement: "€"
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      if (!id(conso_semaine_l).has_state() || std::isnan(id(conso_semaine_l).state)) return NAN;
+      return id(conso_semaine_l).state / 1000.0f * id(prix_m3).state;
+  - platform: template
+    id: cout_semaine_derniere
+    name: "Coût semaine dernière"
+    device_class: monetary
+    unit_of_measurement: "€"
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      if (!id(conso_semaine_derniere_l).has_state() || std::isnan(id(conso_semaine_derniere_l).state)) return NAN;
+      return id(conso_semaine_derniere_l).state / 1000.0f * id(prix_m3).state;
+  - platform: template
+    id: cout_mois_dernier
+    name: "Coût mois dernier"
+    device_class: monetary
+    unit_of_measurement: "€"
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      if (!id(conso_mois_dernier_l).has_state() || std::isnan(id(conso_mois_dernier_l).state)) return NAN;
+      return id(conso_mois_dernier_l).state / 1000.0f * id(prix_m3).state;
 
   # Voisins : index, RSSI et conso du jour déclarés par voisins/voisin.yaml
 

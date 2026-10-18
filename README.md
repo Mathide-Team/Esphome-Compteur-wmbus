@@ -500,9 +500,10 @@ aesv1: "…"                                  # voisin 1, aesv2 pour le voisin 2
 | Conso dernière heure | L, mise à jour toutes les heures pile |
 | Conso aujourd'hui / Conso hier | L (voir plus bas) |
 | Conso semaine / Conso mois | L depuis lundi / depuis le 1er du mois (1er index reçu de la période, gardé au redémarrage) |
+| Conso semaine dernière / Conso mois dernier | L de la semaine ou du mois précédent, figé le lundi ou le 1er à minuit (gardé au redémarrage ; inconnu si l'ESP n'a pas suivi la période) |
 | Prix de l'eau au m³ | Réglage (€/m³, abonnement non compris), voir [Prix de l'eau](#prix-de-leau) |
 | Prix de l'eau | Même valeur en capteur (`EUR/m³`), pour le tableau de bord Énergie |
-| Coût aujourd'hui / Coût mois | € = conso × prix au m³ |
+| Coût aujourd'hui, hier, semaine, semaine dernière, mois, mois dernier | € = conso de la période × prix au m³ (prix fixe, sans abonnement ni tranches : pour le coût exact, voir [tarifeau](https://github.com/Mathide-Team/tarifeau)) |
 | Compteur eau - Dernière trame | Heure de la dernière trame décodée (HA affiche « il y a 3 minutes ») |
 | Heures de conso continue | Nombre d'heures consécutives avec consommation |
 | Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière, Compteur silencieux après | Seuils réglables depuis HA (communs à ton compteur et aux voisins ; silencieux : 6 h par défaut) |

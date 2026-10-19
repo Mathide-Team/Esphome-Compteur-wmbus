@@ -37,9 +37,17 @@ substitutions:
 # ── Voisins (déduits de secrets.yaml : compteur1 … compteur10), clé AES et capteurs Izar de ton
 #    compteur : tout passe par voisins/voisins.yaml, selon les entrées présentes dans secrets.yaml.
 # Ajouter un voisin : compteurN (et nomcompteurN) dans secrets.yaml. Retirer : supprimer compteurN.
-# ESPHome Builder, ou modèles chargés depuis GitHub sans copier de fichier : voir README, « Voisins ».
+# Modèles (voisins/, options/) chargés depuis GitHub : aucun fichier à copier, ni en ligne de
+# commande ni dans ESPHome Builder (issue #36). Ils ne contiennent aucun secret. Accès Internet
+# nécessaire à la compilation. Hors ligne, ou avec des modèles modifiés : remplacer ce bloc par
+#   voisins: !include voisins/voisins.yaml
+# (voir README, « Voisins », option B).
 packages:
-  voisins: !include voisins/voisins.yaml
+  voisins:
+    url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus
+    ref: main            # ou un tag de version, pour figer les modèles
+    refresh: 1d
+    files: [voisins/voisins.yaml]
 
 esphome:
   name: compteur-eau-lora
@@ -123,8 +131,20 @@ time:
               // La veille = 1 h avant minuit (jour de l'année de la journée qui vient de se terminer)
               int veille = ESPTime::from_epoch_local(now.timestamp - 3600).day_of_year;
               if (id(g_day) == veille && id(g_total) > 0 && id(g_day_start) > 0) {
-                // Mémorisée aussi en global : le coût d'hier survit à un redémarrage
+                // Mémorisée aussi en global avec son jour : le coût d'hier survit à un
+                // redémarrage, et devient « inconnu » si le jour attendu n'est plus celui-là
+                // (coupure de plusieurs jours : la valeur ne peut pas être présentée comme hier).
                 id(g_conso_hier_l) = (id(g_total) - id(g_day_start)) * 1000.0;
+                // Jour de la journée terminée, en jours calendaires locaux (compteur pur de dates)
+                auto finJour = ESPTime::from_epoch_local(now.timestamp - 3600);
+                auto joursCal = [](int a, int m, int j) -> int {
+                  a -= m <= 2;
+                  int ere = (a >= 0 ? a : a - 399) / 400;
+                  int ae = a - ere * 400;
+                  int jda = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + j - 1;
+                  return ere * 146097 + ae * 365 + ae / 4 - ae / 100 + jda - 719468;
+                };
+                id(g_hier_jours) = joursCal(finJour.year, finJour.month, finJour.day_of_month);
                 id(conso_hier_l).publish_state(id(g_conso_hier_l));
               }
               id(conso_jour_l).update();
@@ -184,6 +204,18 @@ globals:
     type: double
     restore_value: yes
     initial_value: '0'
+  - id: g_hier_jours          # jour (jours depuis le 1/1/1970) auquel se rapporte g_conso_hier_l
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+  - id: g_semaine_prec_lundi  # lundi de la semaine mémorisée dans g_conso_semaine_prec_l
+    type: int
+    restore_value: yes
+    initial_value: '-1'
+  - id: g_mois_prec_cle       # mois (année × 12 + mois) mémorisé dans g_conso_mois_prec_l
+    type: int
+    restore_value: yes
+    initial_value: '-1'
   - id: g_leak_hours     # heures consécutives avec conso
     type: int
     restore_value: yes
@@ -437,16 +469,20 @@ sensor:
             };
             int lundi = jours(now.year, now.month, now.day_of_month) - (now.day_of_week + 5) % 7;
             if (id(g_week) != lundi || id(g_week_start) <= 0 || total < id(g_week_start)) {
-              // Semaine terminée : sa conso est mémorisée pour la semaine dernière
-              if (id(g_week) >= 0 && id(g_week_start) > 0 && total >= id(g_week_start))
+              // Semaine terminée : sa conso et son lundi sont mémorisés pour la semaine dernière
+              if (id(g_week) >= 0 && id(g_week_start) > 0 && total >= id(g_week_start)) {
                 id(g_conso_semaine_prec_l) = (total - id(g_week_start)) * 1000.0;
+                id(g_semaine_prec_lundi) = id(g_week);
+              }
               id(g_week_start) = total; id(g_week) = lundi;
             }
             int mois = now.year * 12 + now.month;
             if (id(g_month) != mois || id(g_month_start) <= 0 || total < id(g_month_start)) {
-              // Mois terminé : sa conso est mémorisée pour le mois dernier
-              if (id(g_month) >= 0 && id(g_month_start) > 0 && total >= id(g_month_start))
+              // Mois terminé : sa conso et sa clé (année × 12 + mois) sont mémorisés pour le mois dernier
+              if (id(g_month) >= 0 && id(g_month_start) > 0 && total >= id(g_month_start)) {
                 id(g_conso_mois_prec_l) = (total - id(g_month_start)) * 1000.0;
+                id(g_mois_prec_cle) = id(g_month);
+              }
               id(g_month_start) = total; id(g_month) = mois;
             }
             // Dernière trame (horodatage UTC : HA l'affiche « il y a 3 minutes »)
@@ -576,6 +612,19 @@ sensor:
     accuracy_decimals: 2
     update_interval: 60s
     lambda: |-
+      // Inconnu si la valeur mémorisée ne se rapporte pas à hier
+      // (coupure longue, minuit manqué) : on ne présente pas une vieille valeur.
+      auto now = id(ha_time).now();
+      if (!now.is_valid()) return NAN;
+      auto jours = [](int a, int m, int j) -> int {
+        a -= m <= 2;
+        int ere = (a >= 0 ? a : a - 399) / 400;
+        int ae = a - ere * 400;
+        int jda = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + j - 1;
+        return ere * 146097 + ae * 365 + ae / 4 - ae / 100 + jda - 719468;
+      };
+      // Hier = jour calendaire précédent (arithmétique de dates locales, sans fuseau)
+      if (id(g_hier_jours) != jours(now.year, now.month, now.day_of_month) - 1) return NAN;
       return id(g_conso_hier_l) / 1000.0 * id(prix_m3).state;
   - platform: template
     id: cout_semaine
@@ -585,6 +634,19 @@ sensor:
     accuracy_decimals: 2
     update_interval: 60s
     lambda: |-
+      // Inconnu si l'ancre mémorisée n'est pas celle de la semaine en cours
+      // (plus de trame depuis plus d'une semaine) : la valeur serait fausse.
+      auto now = id(ha_time).now();
+      if (!now.is_valid()) return NAN;
+      auto jours = [](int a, int m, int j) -> int {
+        a -= m <= 2;
+        int ere = (a >= 0 ? a : a - 399) / 400;
+        int ae = a - ere * 400;
+        int jda = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + j - 1;
+        return ere * 146097 + ae * 365 + ae / 4 - ae / 100 + jda - 719468;
+      };
+      int lundi = jours(now.year, now.month, now.day_of_month) - (now.day_of_week + 5) % 7;
+      if (id(g_week) != lundi) return NAN;
       if (!id(conso_semaine_l).has_state()) return 0.0f;
       return id(conso_semaine_l).state / 1000.0f * id(prix_m3).state;
   - platform: template
@@ -595,6 +657,20 @@ sensor:
     accuracy_decimals: 2
     update_interval: 60s
     lambda: |-
+      // Inconnu si la semaine mémorisée n'est pas celle qui précède la semaine
+      // en cours (coupure de plusieurs semaines : la valeur couvrirait plus
+      // qu'une semaine et ne peut pas être présentée comme « semaine dernière »).
+      auto now = id(ha_time).now();
+      if (!now.is_valid()) return NAN;
+      auto jours = [](int a, int m, int j) -> int {
+        a -= m <= 2;
+        int ere = (a >= 0 ? a : a - 399) / 400;
+        int ae = a - ere * 400;
+        int jda = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + j - 1;
+        return ere * 146097 + ae * 365 + ae / 4 - ae / 100 + jda - 719468;
+      };
+      int lundi = jours(now.year, now.month, now.day_of_month) - (now.day_of_week + 5) % 7;
+      if (id(g_semaine_prec_lundi) != lundi - 7) return NAN;
       return id(g_conso_semaine_prec_l) / 1000.0 * id(prix_m3).state;
   - platform: template
     id: cout_mois_dernier
@@ -604,6 +680,11 @@ sensor:
     accuracy_decimals: 2
     update_interval: 60s
     lambda: |-
+      // Inconnu si le mois mémorisé n'est pas celui qui précède le mois en cours
+      // (coupure de plusieurs mois : la valeur ne couvrirait pas le seul mois dernier).
+      auto now = id(ha_time).now();
+      if (!now.is_valid()) return NAN;
+      if (id(g_mois_prec_cle) != now.year * 12 + now.month - 1) return NAN;
       return id(g_conso_mois_prec_l) / 1000.0 * id(prix_m3).state;
 
   # Voisins : index, RSSI et conso du jour déclarés par voisins/voisin.yaml

@@ -96,7 +96,7 @@ views:
             icon: mdi:cash-refund
             vertical: true
           - type: tile
-            entity: sensor.compteur_eau_lora_cout_semaine
+            entity: sensor.compteur_eau_lora_cout_cette_semaine
             name: Coût cette semaine
             icon: mdi:cash-plus
             vertical: true

@@ -404,15 +404,41 @@ nomcompteur1: "Dupont"       # facultatif : « Voisin 1 » par défaut
 
 Comment ça marche : `compteur-eau-lora.yaml` fusionne `secrets.yaml` dans ses `substitutions` (`<<: !include secrets.yaml`). [`voisins/voisins.yaml`](voisins/voisins.yaml) prévoit alors 10 emplacements, et chacun n'inclut le modèle [`voisins/voisin.yaml`](voisins/voisin.yaml) que si son `compteurN` existe. Ce sont les paquets conditionnels d'ESPHome (expressions Jinja, ESPHome ≥ 2025.x). Les valeurs restent masquées dans « Validate » et `esphome config`, comme avec `!secret`.
 
-> **Mise à jour depuis la version avec une ligne par voisin** : remplace les lignes `voisinN: !include …` par `voisins: !include voisins/voisins.yaml` (déjà fait dans ce fichier). Ton `secrets.yaml` ne change pas : `compteur1`… `compteur4` et `nomcompteur1`… `nomcompteur4` y sont déjà, avec les mêmes N. L'historique est donc conservé. La déclaration à la main reste possible, **à la place** de `voisins/voisins.yaml` (pas en plus) : `voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }`.
+> **Mise à jour depuis la version avec une ligne par voisin** : remplace les lignes `voisinN: !include …` par le paquet `voisins:` de `compteur-eau-lora.yaml` (modèles chargés depuis GitHub, ou `voisins: !include voisins/voisins.yaml` hors ligne, voir ci-dessous). Ton `secrets.yaml` ne change pas : `compteur1`… `compteur4` et `nomcompteur1`… `nomcompteur4` y sont déjà, avec les mêmes N. L'historique est donc conservé. La déclaration à la main reste possible, **à la place** de `voisins/voisins.yaml` (pas en plus) : `voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }`.
 
 > Paquet ntfy : chaque voisin y reçoit son bilan et les alertes de son compteur sur son sujet `ntfy_topic_vN`, également déduit de `secrets.yaml`. Voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy).
 
 ### Dans ESPHome Builder
 
-ESPHome Builder (module complémentaire de Home Assistant, ou tableau de bord ESPHome) range ses fichiers dans le dossier `esphome` de la configuration HA (`/config/esphome/`). Son éditeur ne modifie que les fichiers d'appareils et ne sait pas créer de dossier. Les voisins se gèrent **uniquement dans les secrets** (bouton **Secrets** en haut à droite du Builder). Il reste à fournir les fichiers des dossiers `voisins/` et `options/`, de l'une des deux façons suivantes.
+ESPHome Builder (module complémentaire de Home Assistant, ou tableau de bord ESPHome) range ses fichiers dans le dossier `esphome` de la configuration HA (`/config/esphome/`). Son éditeur ne modifie que les fichiers d'appareils et ne sait pas créer de dossier. Les voisins se gèrent **uniquement dans les secrets** (bouton **Secrets** en haut à droite du Builder). Les modèles des dossiers `voisins/` et `options/` sont fournis de l'une des deux façons suivantes.
 
-**Option A : copier les fichiers (hors ligne, version figée)**
+**Option A (par défaut) : modèles chargés depuis GitHub, aucun fichier à copier**
+
+C'est ce que fait déjà `compteur-eau-lora.yaml` (issue #36) : ces fichiers ne contiennent aucun secret, ESPHome les télécharge.
+
+```yaml
+packages:
+  voisins:
+    url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus
+    ref: main            # ou un tag de version, pour figer les modèles
+    refresh: 1d
+    files: [voisins/voisins.yaml]
+```
+
+Ce seul paquet suffit : il apporte aussi `voisin.yaml`, `cle.yaml` et `options/izar.yaml`, pris dans le même dépôt (testé). Les secrets restent dans ton `secrets.yaml`. Il faut un accès Internet à la compilation ; `refresh: 1d` limite le téléchargement à une fois par jour.
+
+Dans le Builder : **Secrets** pour les voisins, puis `compteur-eau-lora` → **Validate** et **Install → Wirelessly**.
+
+**Option B : copier les fichiers (hors ligne, ou modèles modifiés)**
+
+Dans `compteur-eau-lora.yaml`, remplace le bloc `voisins:` (url, ref, refresh, files) de `packages:` par la ligne :
+
+```yaml
+packages:
+  voisins: !include voisins/voisins.yaml
+```
+
+Puis fournis les fichiers :
 
 1. Installe un module d'accès aux fichiers : **File editor** ou **Studio Code Server** (Paramètres → Modules complémentaires → Boutique), ou le partage réseau **Samba share**.
 2. Dans le dossier `esphome`, crée les dossiers **`voisins`** et **`options`**, puis copie [voisins/voisins.yaml](voisins/voisins.yaml), [voisins/voisin.yaml](voisins/voisin.yaml), [voisins/cle.yaml](voisins/cle.yaml) et [options/izar.yaml](options/izar.yaml).
@@ -430,23 +456,6 @@ ESPHome Builder (module complémentaire de Home Assistant, ou tableau de bord ES
    ```
    Le Builder n'affiche que les fichiers à la racine de `esphome/` : les modèles, rangés dans des sous-dossiers, n'apparaissent pas comme de faux appareils.
 4. Dans le Builder : **Secrets** pour les voisins, puis `compteur-eau-lora` → **Validate** et **Install → Wirelessly**.
-
-**Option B : charger les modèles depuis GitHub (aucun fichier à copier)**
-
-Ces fichiers ne contiennent aucun secret : ESPHome peut les télécharger. Dans `compteur-eau-lora.yaml`, remplace la ligne `voisins: !include voisins/voisins.yaml` de `packages:` par :
-
-```yaml
-packages:
-  voisins:
-    url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus
-    ref: main            # ou un tag de version, pour figer les modèles
-    refresh: 1d
-    files: [voisins/voisins.yaml]
-```
-
-Ce seul paquet suffit : il apporte aussi `voisin.yaml`, `cle.yaml` et `options/izar.yaml`, pris dans le même dépôt (testé).
-
-Les secrets restent dans ton `secrets.yaml`. Il faut un accès Internet à la compilation.
 
 ## Izar / DME
 
@@ -503,7 +512,7 @@ aesv1: "…"                                  # voisin 1, aesv2 pour le voisin 2
 | Prix de l'eau au m³ | Réglage (€/m³, abonnement non compris), voir [Prix de l'eau](#prix-de-leau) |
 | Prix de l'eau | Même valeur en capteur (`EUR/m³`), pour le tableau de bord Énergie |
 | Coût aujourd'hui / Coût mois | € = conso × prix au m³ |
-| Coût hier, Coût cette semaine, Coût semaine dernière, Coût mois dernier | € = conso de la période × prix au m³ ; la conso d'hier et celle des périodes écoulées sont mémorisées (redémarrable) |
+| Coût hier, Coût cette semaine, Coût semaine dernière, Coût mois dernier | € = conso de la période × prix au m³ ; la conso d'hier et celles des périodes écoulées sont mémorisées (redémarrable). Après une coupure qui saute une période (plusieurs jours / semaines / mois sans trame), le capteur concerné passe à « inconnu » plutôt que d'afficher une valeur qui ne correspond plus à la période attendue |
 | Compteur eau - Dernière trame | Heure de la dernière trame décodée (HA affiche « il y a 3 minutes ») |
 | Heures de conso continue | Nombre d'heures consécutives avec consommation |
 | Fuite - conso min par heure, Fuite - heures consécutives, Seuil débit anormal, Seuil conso journalière, Compteur silencieux après | Seuils réglables depuis HA (communs à ton compteur et aux voisins ; silencieux : 6 h par défaut) |

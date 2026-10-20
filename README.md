@@ -207,7 +207,7 @@ on_boot:
 
 Deux sources règlent la **même horloge** de l'ESP : Home Assistant (`platform: homeassistant`, id `ha_time`) et l'heure Internet (`platform: sntp`, fuseau `${fuseau}`, `Europe/Paris` par défaut). Dès que l'une des deux a répondu, `id(ha_time).now()` est valide. **Si HA est arrêté**, la conso du jour, la bascule de minuit et l'extinction nocturne de l'écran continuent avec l'heure Internet (il faut seulement le WiFi).
 
-Le SNTP n'a pas d'`id` : si le paquet ntfy déclare aussi une source SNTP, ESPHome fusionne les deux en une seule. Il faut pour cela une version du paquet ntfy dont la source SNTP n'a pas d'`id` non plus (voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy)).
+Le SNTP n'a pas d'`id` : si le paquet ntfy déclare aussi une source SNTP, ESPHome fusionne les deux en une seule. Il faut pour cela une version du paquet ntfy dont la source SNTP n'a pas d'`id` non plus (voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathilde-Team/Esphome-Compteur-wmbus-ntfy)).
 
 Deux tâches tournent à heure fixe :
 
@@ -406,7 +406,7 @@ Comment ça marche : `compteur-eau-lora.yaml` fusionne `secrets.yaml` dans ses `
 
 > **Mise à jour depuis la version avec une ligne par voisin** : remplace les lignes `voisinN: !include …` par le paquet `voisins:` de `compteur-eau-lora.yaml` (modèles chargés depuis GitHub, ou `voisins: !include voisins/voisins.yaml` hors ligne, voir ci-dessous). Ton `secrets.yaml` ne change pas : `compteur1`… `compteur4` et `nomcompteur1`… `nomcompteur4` y sont déjà, avec les mêmes N. L'historique est donc conservé. La déclaration à la main reste possible, **à la place** de `voisins/voisins.yaml` (pas en plus) : `voisin1: !include { file: voisins/voisin.yaml, vars: { i: 1, num: !secret compteur1, nom: !secret nomcompteur1 } }`.
 
-> Paquet ntfy : chaque voisin y reçoit son bilan et les alertes de son compteur sur son sujet `ntfy_topic_vN`, également déduit de `secrets.yaml`. Voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy).
+> Paquet ntfy : chaque voisin y reçoit son bilan et les alertes de son compteur sur son sujet `ntfy_topic_vN`, également déduit de `secrets.yaml`. Voir [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathilde-Team/Esphome-Compteur-wmbus-ntfy).
 
 ### Dans ESPHome Builder
 
@@ -419,7 +419,7 @@ C'est ce que fait déjà `compteur-eau-lora.yaml` (issue #36) : ces fichiers ne 
 ```yaml
 packages:
   voisins:
-    url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus
+    url: https://github.com/Mathilde-Team/Esphome-Compteur-wmbus
     ref: main            # ou un tag de version, pour figer les modèles
     refresh: 1d
     files: [voisins/voisins.yaml]
@@ -583,7 +583,7 @@ Pour ton compteur **et pour chaque voisin déclaré** : mêmes règles, mêmes s
 
 La résolution de l'index est de 1 L : le débit estimé est donc grossier pour les petits débits.
 
-Les alertes d'un voisin s'appellent « Dupont - Fuite confirmée »… Le paquet ntfy peut les envoyer sur le sujet de ce voisin (voir [Esphome-Compteur-wmbus-ntfy#5](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy/issues/5)).
+Les alertes d'un voisin s'appellent « Dupont - Fuite confirmée »… Le paquet ntfy peut les envoyer sur le sujet de ce voisin (voir [Esphome-Compteur-wmbus-ntfy#5](https://github.com/Mathilde-Team/Esphome-Compteur-wmbus-ntfy/issues/5)).
 
 ## Tableau de bord Énergie (eau)
 
@@ -733,7 +733,7 @@ Exemple avec des numéros fictifs. Pour les compteurs **inconnus**, seuls le num
 
 ## Notifications ntfy entre voisins (sans Home Assistant)
 
-Le dépôt compagnon **[Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy)** ajoute des notifications push [ntfy](https://ntfy.sh). L'ESP les envoie **lui-même** en HTTPS : elles ne passent ni par Home Assistant, ni par `notify`, ni par MQTT.
+Le dépôt compagnon **[Esphome-Compteur-wmbus-ntfy](https://github.com/Mathilde-Team/Esphome-Compteur-wmbus-ntfy)** ajoute des notifications push [ntfy](https://ntfy.sh). L'ESP les envoie **lui-même** en HTTPS : elles ne passent ni par Home Assistant, ni par `notify`, ni par MQTT.
 
 - **Toi** : alertes (fuite confirmée, fuite de nuit, débit anormal, conso élevée, conso pendant une absence, compteur silencieux), fins d'alerte et bilan quotidien. Elles arrivent même si Home Assistant est arrêté.
 - **Chaque voisin** : bilan quotidien de **son** compteur (conso du jour + index) et alertes de **son** compteur (fuite, débit, conso élevée, compteur silencieux) sur **son** sujet ntfy. Il le lit dans l'appli ntfy (Android, iOS, navigateur) ou dans sa propre domotique (Home Assistant, Jeedom, Domoticz, openHAB, Node-RED… : tout ce qui sait lire un flux HTTP JSON, SSE ou WebSocket). Un voisin n'a besoin d'**aucune** installation chez lui.
@@ -745,9 +745,9 @@ Mise en place, en résumé :
 3. Le paquet, puis une ligne par voisin (même `i` que sa ligne `voisins/voisin.yaml`), ajoutés à `packages:` :
    ```yaml
    packages:
-     ntfy: github://Mathide-Team/Esphome-Compteur-wmbus-ntfy/ntfy.yaml@main
+     ntfy: github://Mathilde-Team/Esphome-Compteur-wmbus-ntfy/ntfy.yaml@main
      ntfy_voisin1:
-       url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy
+       url: https://github.com/Mathilde-Team/Esphome-Compteur-wmbus-ntfy
        ref: main
        files:
          - path: ntfy-voisin.yaml
@@ -755,7 +755,7 @@ Mise en place, en résumé :
    ```
 4. Flash, puis bouton **« ntfy - message de test »**.
 
-Détails (contenu des messages, priorités, abonnement depuis une autre domotique, serveur ntfy privé, limites de ntfy.sh) : voir le [README du dépôt ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy#readme).
+Détails (contenu des messages, priorités, abonnement depuis une autre domotique, serveur ntfy privé, limites de ntfy.sh) : voir le [README du dépôt ntfy](https://github.com/Mathilde-Team/Esphome-Compteur-wmbus-ntfy#readme).
 
 ## Prévenir les voisins (extension)
 
@@ -786,7 +786,7 @@ L'automatisation construit d'abord la ligne (`ligne`), puis l'envoie : il suffit
 
 ## Contribuer
 
-Le dépôt suit le socle qualité de Mathide-Team :
+Le dépôt suit le socle qualité de Mathilde-Team :
 
 - **`main`** = branche de livraison, **`dev`** = branche d'intégration. On ne pousse jamais directement sur l'une ou l'autre.
 - Une branche par sujet, créée depuis `dev` (`feat/<n°>-…`, `fix/<n°>-…`, `docs/…`, `ci/…`), puis une **PR vers `dev`**.

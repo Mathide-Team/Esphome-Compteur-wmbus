@@ -1,4 +1,4 @@
-# yamllint : règles du socle Mathide-Team pour les dépôts YAML (ESPHome, Home Assistant, CI)
+# yamllint : règles du socle Mathilde-Team pour les dépôts YAML (ESPHome, Home Assistant, CI)
 extends: default
 rules:
   line-length: disable          # lambdas C++ et templates Jinja sur une ligne

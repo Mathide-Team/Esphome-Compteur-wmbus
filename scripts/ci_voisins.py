@@ -26,7 +26,7 @@ if FUSION not in source:
     sys.exit("compteur-eau-lora.yaml : ligne « <<: !include secrets.yaml » introuvable")
 # Modèles chargés depuis GitHub (ref main) par défaut (issue #36) : la CI valide ceux de la
 # branche testée, inclus localement à la place du paquet distant.
-DISTANT = re.compile(r"^  voisins:\n    url: https://github\.com/Mathide-Team/Esphome-Compteur-wmbus\n(?:    .*\n)+", re.M)
+DISTANT = re.compile(r"^  voisins:\n    url: https://github\.com/Mathilde-Team/Esphome-Compteur-wmbus\n(?:    .*\n)+", re.M)
 if not DISTANT.search(source):
     sys.exit("compteur-eau-lora.yaml : paquet « voisins » (url GitHub) introuvable")
 source = DISTANT.sub("  voisins: !include voisins/voisins.yaml\n", source, count=1)

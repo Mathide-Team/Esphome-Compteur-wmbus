@@ -249,6 +249,8 @@ Deux tâches tournent à heure fixe :
 
 `SzczepanLeon/esphome-components@main` fournit `wmbus_radio` (pilote de la radio SX1262), `wmbus_meter` (déclaration des compteurs) et `wmbus_common` (décodage, drivers comme `dme_07`). La branche `main` peut évoluer : en cas de souci après une mise à jour, fige une version (`@<tag>` ou `@<commit>`).
 
+**Drivers disponibles** : la branche `main` (version 5, fork d'IoTLabs-pl) reprend le code de [wmbusmeters](https://github.com/wmbusmeters/wmbusmeters), donc la liste des drivers suit celle de wmbusmeters — Diehl (`dme_07`, `izar`, `hydrus`, `sharky`, `sharky774`, `auto`) et bien d'autres (compteur gaz, chaleur, etc.). Un compte de type non prévu peut être lu avec `type: auto` (détection automatique). Le Sharky 775 n'a pas de fichier dédié : tester `sharky` puis `sharky774`, ou passer par `auto` (#35).
+
 ### `spi` et `i2c` : les bus
 
 - `spi` (CLK 9, MOSI 10, MISO 11) : liaison avec la radio SX1262.

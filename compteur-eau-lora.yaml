@@ -44,7 +44,7 @@ substitutions:
 # (voir README, « Voisins », option B).
 packages:
   voisins:
-    url: https://github.com/Mathide-Team/Esphome-Compteur-wmbus
+    url: https://github.com/Mathilde-Team/Esphome-Compteur-wmbus
     ref: main            # ou un tag de version, pour figer les modèles
     refresh: 1d
     files: [voisins/voisins.yaml]

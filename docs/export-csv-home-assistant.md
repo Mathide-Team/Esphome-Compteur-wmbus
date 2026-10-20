@@ -113,7 +113,7 @@ L'automatisation construit d'abord la `ligne`, puis l'envoie. Pour la renvoyer a
 
 - **MQTT** : `mqtt.publish` sur `compteurs_eau/<numéro>/releve`, uniquement pour les compteurs connus. Il faut l'intégration MQTT et un broker où **chaque voisin n'a le droit de lire que son propre topic** (ACL Mosquitto).
 - **Autres notify** : `notify.mobile_app_<téléphone>`, Telegram, e-mail, ou **ntfy** avec l'intégration ntfy de HA.
-- **Sans HA** : l'ESP peut prévenir les voisins lui-même avec ntfy. Voir le dépôt [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathide-Team/Esphome-Compteur-wmbus-ntfy).
+- **Sans HA** : l'ESP peut prévenir les voisins lui-même avec ntfy. Voir le dépôt [Esphome-Compteur-wmbus-ntfy](https://github.com/Mathilde-Team/Esphome-Compteur-wmbus-ntfy).
 
 Un voisin ne doit jamais recevoir le relevé d'un autre : un topic ou un sujet par personne.
 

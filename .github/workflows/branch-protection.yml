@@ -40,4 +40,6 @@ jobs:
       - name: Comparaison avec .github/branch-protection/${{ matrix.branche }}.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: uv run --group scripts python scripts/check_branch_protection.py --branche ${{ matrix.branche }}
+        # loguru (SOCLE §8) vient du groupe « scripts » de pyproject.toml, version
+        # figée par uv.lock ; --only-group n'installe ni le projet ni les autres groupes.
+        run: uv run --only-group scripts python scripts/check_branch_protection.py --branche ${{ matrix.branche }}

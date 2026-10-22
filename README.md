@@ -184,6 +184,7 @@ on_boot:
 ```
 
 - `name: compteur-eau-lora` : nom réseau (`compteur-eau-lora.local`) et préfixe des entités HA (`sensor.compteur_eau_lora_…`).
+- `project` (`mathilde-team.compteur-eau-wmbus`, version `1.0.0`) : Home Assistant affiche l'appareil avec le fabricant **mathilde-team** et le modèle **compteur-eau-wmbus**, et la version `1.0.0 (ESPHome …)`. C'est le marqueur stable lu par les intégrations, voir [Marqueur stable pour les intégrations](#marqueur-stable-pour-les-intégrations) : ne pas le renommer.
 - `on_boot` à la **priorité 799** : sur cette carte, l'OLED est alimenté par la sortie **Vext**. Celle-ci doit être allumée **après** l'initialisation des sorties GPIO (priorité 800, qui la remet à l'arrêt) et **avant** l'initialisation de l'écran (priorité 400). À 800, l'écran restait noir. Les 50 ms laissent l'alimentation se stabiliser.
 
 ### `esp32` : la puce
@@ -532,6 +533,15 @@ aesv1: "…"                                  # voisin 1, aesv2 pour le voisin 2
 | Nom - Débit estimé | L/h, entre deux trames espacées d'au moins 120 s |
 | Nom - RSSI, Nom - Dernière trame | Diagnostic |
 | Nom - Fuite confirmée, Fuite suspectée (nuit), Débit anormal, Conso journalière anormale, Compteur silencieux | Les mêmes alertes que pour ton compteur, avec les **mêmes seuils** (pas de mode absence pour les voisins) |
+
+### Marqueur stable pour les intégrations
+
+Pour qu'une intégration Home Assistant (par exemple [Tarif-Eau](https://github.com/Mathilde-Team/Tarif-Eau), issue #47) retrouve **l'index du compteur de la maison** sans dépendre de libellés modifiables, ce dépôt s'engage sur deux points, vérifiés à chaque PR par l'étape « Marqueur stable pour les intégrations » du CI :
+
+1. **L'appareil** : dans le registre des appareils de HA, le fabricant est `mathilde-team` et le modèle `compteur-eau-wmbus` (bloc `esphome: project:`). Ces deux valeurs ne dépendent ni du nom de l'appareil (`name`, `friendly_name`) ni d'un renommage dans HA.
+2. **Le capteur d'index de la maison** : sur cet appareil, c'est le seul capteur dont le **nom d'origine** (`original_name` du registre des entités) est exactement `Compteur eau - Volume total` (id ESPHome `eau_total`, `device_class: water`, `state_class: total_increasing`, en m³). Le nom d'origine reste le même si l'utilisateur renomme l'entité dans HA.
+
+Les index des voisins sont sur le même appareil, mais leur nom d'origine est `<nom> - Index` : ils ne correspondent jamais au point 2. La version du projet (`1.0.0`) ne fait pas partie du contrat.
 
 ## Calcul de la conso du jour
 

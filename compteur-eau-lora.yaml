@@ -52,6 +52,14 @@ packages:
 esphome:
   name: compteur-eau-lora
   friendly_name: Compteur Eau LoRa
+  # Marqueur stable pour les intégrations Home Assistant (issue #47, Tarif-Eau) :
+  # l'appareil apparaît avec le fabricant « mathilde-team » et le modèle
+  # « compteur-eau-wmbus », quel que soit son nom. Contrat documenté dans le
+  # README (« Marqueur stable pour les intégrations ») et vérifié par
+  # tests/test_marqueur_integrations.py : ne pas renommer.
+  project:
+    name: mathilde-team.compteur-eau-wmbus
+    version: "1.0.0"
   # Vext doit être allumé APRÈS le setup() de la sortie GPIO (priorité 800, qui la remet à l'arrêt)
   # et AVANT l'init de l'OLED (priorité 400) : d'où 799. À 800, l'OLED restait éteint (écran noir).
   # Liste (et non bloc unique) : chaque voisin y ajoute sa propre inscription (voisins/voisin.yaml).

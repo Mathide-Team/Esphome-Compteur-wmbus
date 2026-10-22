@@ -320,7 +320,7 @@ Paramètres : `p_id` (numéro sur 8 chiffres hexadécimaux), `p_rssi` (dBm), `p_
 - `Compteur eau - RSSI` : force du signal du compteur.
 - Unités écrites en dur (`m³` sur les index, `dBm` sur les RSSI) : le composant publie `m3` et `dbm`, refusés ou mal reconnus par HA. Voir [Tableau de bord Énergie](#tableau-de-bord-énergie-eau).
 - `WiFi RSSI` : force du signal WiFi, toutes les 30 s.
-- Capteurs `template` : `Débit estimé` (L/h), `Conso dernière heure`, `Conso hier`, `Heures de conso continue`, `Conso aujourd'hui` (recalculée toutes les 60 s, 0 par défaut).
+- Capteurs `template` : `Débit estimé` (L/h, `device_class: volume_flow_rate`), `Conso dernière heure`, `Conso hier`, `Heures de conso continue`, `Conso aujourd'hui` (recalculée toutes les 60 s, 0 par défaut).
 
 **Chaque voisin** (créés par `voisins/voisin.yaml`) : `Nom - Index` (avec la même logique de 1er index du jour), `Nom - RSSI` et `Nom - Conso aujourd'hui`.
 
@@ -620,6 +620,10 @@ Ne pas ajouter :
 - les index des voisins (`… - Index`) : ils apparaissent dans la liste (mêmes attributs), mais les additionner à ton compteur fausserait ta consommation.
 
 Avec `total_increasing`, si l'index baisse (compteur remplacé), HA démarre un nouveau cycle sans perdre l'historique.
+
+### Débit d'eau (facultatif)
+
+Dans la même fenêtre, le champ **Débit d'eau** (« Water flow rate ») accepte `sensor.compteur_eau_lora_debit_estime` (« Débit estimé »). HA y exige `device_class: volume_flow_rate` ; sans cette classe, il affiche « Classe d'appareil inattendue » (#46). Le capteur la déclare, avec l'unité `L/h`.
 
 ### Pourquoi l'unité est écrite dans le YAML
 

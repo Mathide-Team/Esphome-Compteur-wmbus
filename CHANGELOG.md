@@ -2,6 +2,11 @@
 
 Format : [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/). Les numéros suivent [SemVer](https://semver.org/lang/fr/), et la version de `pyproject.toml` est égale au tag.
 
+## [Non publié]
+
+### Corrigé
+- **Débit estimé** (#46) : ajout de `device_class: volume_flow_rate` sur le capteur du compteur et sur ceux des voisins. Le champ « Débit d'eau » du tableau de bord Énergie de Home Assistant ne signale plus « Classe d'appareil inattendue ».
+
 ## [0.1.0] - 2026-10-22
 
 Première version publiée sous forme de release GitHub.

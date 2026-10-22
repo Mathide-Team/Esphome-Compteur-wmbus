@@ -26,9 +26,14 @@ import sys
 import unicodedata
 from pathlib import Path
 
+from loguru import logger
+
 try:
     import yaml
 except ImportError:  # pragma: no cover
+    from loguru import logger  # noqa: F401 — dernier recours, PyYAML absent
+
+    logger.critical("PyYAML manquant : « pip install pyyaml » ou « uv run --with pyyaml python … »")
     sys.exit("PyYAML manquant : « pip install pyyaml » ou « uv run --with pyyaml python … »")
 
 MODELE_VOISIN = "voisins/voisin.yaml"
@@ -42,52 +47,73 @@ class Include:
     """Valeur d'un « !include » (fichier + variables), sans charger le fichier."""
 
     def __init__(self, fichier: str, variables: dict | None = None):
+        logger.debug("Include.__init__() appelée | fichier={}", fichier)
         self.fichier = fichier
         self.variables = variables or {}
+        logger.debug("Include.__init__() retourne | include prêt")
 
 
 def chargeur(secrets: dict) -> type:
+    logger.debug("chargeur() appelée | {} secret(s)", len(secrets))
     class Chargeur(yaml.SafeLoader):
         pass
 
     def secret(loader, node):
+        logger.debug("secret() appelée | lecture d'un !secret")
         cle = loader.construct_scalar(node)
         if cle not in secrets:
+            logger.error("secret() : secret absent de secrets.yaml (valeur non journalisée)")
             sys.exit(f"Secret « {cle} » absent de secrets.yaml")
+        logger.debug("secret() retourne | valeur substituée (jamais journalisée)")
         return secrets[cle]
 
     def include(loader, node):
+        logger.debug("include() appelée | lecture d'un !include")
         if isinstance(node, yaml.MappingNode):
             m = loader.construct_mapping(node, deep=True)
+            logger.debug("include() retourne | include avec variables")
             return Include(str(m.get("file", "")), m.get("vars"))
+        logger.debug("include() retourne | include simple")
         return Include(loader.construct_scalar(node))
 
     def autre(loader, suffixe, node):
         # !lambda, !extend, !remove… : valeur brute (inutile ici)
+        logger.debug("autre() appelée | constructeur !{}", suffixe)
         if isinstance(node, yaml.MappingNode):
+            logger.debug("autre() retourne | mapping brut")
             return loader.construct_mapping(node, deep=True)
         if isinstance(node, yaml.SequenceNode):
+            logger.debug("autre() retourne | séquence brute")
             return loader.construct_sequence(node, deep=True)
+        logger.debug("autre() retourne | scalaire brut")
         return loader.construct_scalar(node)
 
     Chargeur.add_constructor("!secret", secret)
     Chargeur.add_constructor("!include", include)
     Chargeur.add_multi_constructor("!", autre)
+    logger.debug("chargeur() retourne | chargeur YAML prêt")
     return Chargeur
 
 
 def lire_yaml(chemin: Path, secrets: dict | None = None):
+    logger.debug("lire_yaml() appelée | chemin={}", chemin.name)
     texte = chemin.read_text(encoding="utf-8")
     # « <<: !include secrets.yaml » (fusion YAML d'un fichier) : non géré par PyYAML, inutile ici
     texte = FUSION_INCLUDE.sub("", texte)
-    return yaml.load(texte, Loader=chargeur(secrets or {}))
+    document = yaml.load(texte, Loader=chargeur(secrets or {}))
+    logger.debug("lire_yaml() retourne | document chargé")
+    return document
 
 
 def substituer(valeur, subs: dict):
     """Remplace ${x} et $x par les substitutions de la configuration."""
+    logger.debug("substituer() appelée")
     if not isinstance(valeur, str):
+        logger.debug("substituer() retourne | valeur non textuelle inchangée")
         return valeur
-    return re.sub(r"\$\{(\w+)\}|\$(\w+)", lambda m: str(subs.get(m.group(1) or m.group(2), m.group(0))), valeur)
+    resultat = re.sub(r"\$\{(\w+)\}|\$(\w+)", lambda m: str(subs.get(m.group(1) or m.group(2), m.group(0))), valeur)
+    logger.debug("substituer() retourne | substitutions appliquées")
+    return resultat
 
 
 def voisins_de_secrets(secrets: dict) -> list[dict]:
@@ -101,20 +127,27 @@ def voisins_de_secrets(secrets: dict) -> list[dict]:
 
 def chemins_paquet(pkg) -> list[tuple[str, dict | None]]:
     """(fichier, variables) d'un paquet : !include local, ou paquet distant (url + files)."""
+    logger.debug("chemins_paquet() appelée")
     if isinstance(pkg, Include):
+        logger.debug("chemins_paquet() retourne | paquet local")
         return [(pkg.fichier.replace("\\", "/"), pkg.variables)]
     if isinstance(pkg, dict) and "files" in pkg:
-        return [
+        chemins = [
             (str(f.get("path", "")), f.get("vars") or {}) if isinstance(f, dict) else (str(f), None)
             for f in pkg["files"] or []
         ]
+        logger.debug("chemins_paquet() retourne | {} fichier(s) distant(s)", len(chemins))
+        return chemins
     if isinstance(pkg, str) and pkg.startswith("github://"):
+        logger.debug("chemins_paquet() retourne | paquet distant")
         return [(pkg.split("@")[0], None)]
+    logger.debug("chemins_paquet() retourne | aucun chemin")
     return []
 
 
 def voisins_declares(config: dict, secrets: dict | None = None) -> list[dict]:
     """Liste des voisins {i, nom, num} : déduits de secrets.yaml et/ou déclarés à la main."""
+    logger.debug("voisins_declares() appelée")
     subs = config.get("substitutions") or {}
     trouves = []
     for cle, pkg in (config.get("packages") or {}).items():
@@ -126,24 +159,33 @@ def voisins_declares(config: dict, secrets: dict | None = None) -> list[dict]:
     numeros = [v["i"] for v in trouves]
     doublons = {i for i in numeros if numeros.count(i) > 1}
     if doublons:
+        logger.error("voisins_declares() : numéro de voisin en double {}", sorted(doublons))
         sys.exit(f"Numéro de voisin en double : {sorted(doublons)}")
+    logger.debug("voisins_declares() retourne | {} voisin(s)", len(trouves))
     return sorted(trouves, key=lambda v: v["i"])
 
 
 def voisin_manuel(cle: str, variables: dict, subs: dict) -> dict:
     """Voisin déclaré par une ligne « voisinN: !include { file: voisins/voisin.yaml, vars: … } »."""
+    logger.debug("voisin_manuel() appelée | paquet={}", cle)
     v = {k: substituer(val, subs) for k, val in variables.items()}
     if "i" not in v or "nom" not in v:
+        logger.error("voisin_manuel() : variables i et nom obligatoires (paquet {})", cle)
         sys.exit(f"Paquet « {cle} » : variables i et nom obligatoires")
-    return {"i": int(v["i"]), "nom": str(v["nom"]), "num": str(v.get("num", ""))}
+    voisin = {"i": int(v["i"]), "nom": str(v["nom"]), "num": str(v.get("num", ""))}
+    logger.debug("voisin_manuel() retourne | voisin n°{}", voisin["i"])
+    return voisin
 
 
 # ───────────────────────────── Identifiants Home Assistant ─────────────────────────────
 
 def slug(texte: str) -> str:
     """Équivalent de homeassistant.util.slugify (accents retirés, séparateur « _ »)."""
+    logger.debug("slug() appelée")
     texte = unicodedata.normalize("NFKD", texte).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", "_", texte.lower()).strip("_")
+    identifiant = re.sub(r"[^a-z0-9]+", "_", texte.lower()).strip("_")
+    logger.debug("slug() retourne | identifiant normalisé")
+    return identifiant
 
 
 def entite(domaine: str, appareil: str, nom: str) -> str:
@@ -153,7 +195,9 @@ def entite(domaine: str, appareil: str, nom: str) -> str:
 # ───────────────────────────── Vue « Voisins » ─────────────────────────────
 
 def vue_voisins(voisins: list[dict], appareil: str) -> dict:
+    logger.debug("vue_voisins() appelée | {} voisin(s)", len(voisins))
     if not voisins:
+        logger.debug("vue_voisins() retourne | vue « aucun voisin »")
         return {
             "title": "Voisins", "path": "voisins", "icon": "mdi:account-group", "type": "sections",
             "sections": [{"type": "grid", "cards": [{
@@ -233,23 +277,29 @@ def vue_voisins(voisins: list[dict], appareil: str) -> dict:
                 },
             ],
         })
-    return {
+    vue = {
         "title": "Voisins", "path": "voisins", "icon": "mdi:account-group",
         "type": "sections", "max_columns": 3, "sections": sections,
     }
+    logger.debug("vue_voisins() retourne | {} section(s)", len(sections))
+    return vue
 
 
 # ───────────────────────────── Jauges et actions ─────────────────────────────
 
 def valeur_initiale(config: dict, ident: str) -> float | None:
+    logger.debug("valeur_initiale() appelée | identifiant={}", ident)
     for n in config.get("number") or []:
         if isinstance(n, dict) and n.get("id") == ident and "initial_value" in n:
+            logger.debug("valeur_initiale() retourne | valeur trouvée")
             return float(n["initial_value"])
+    logger.debug("valeur_initiale() retourne | aucune valeur")
     return None
 
 
 def regler_jauges(tableau: dict, appareil: str, seuil_debit: float, seuil_jour: float) -> None:
     """Max et paliers des jauges dérivés des seuils (mêmes proportions que les valeurs d'origine)."""
+    logger.debug("regler_jauges() appelée | seuil débit={} seuil jour={}", seuil_debit, seuil_jour)
     regles = {
         entite("sensor", appareil, "Débit estimé"): (seuil_debit, 0.3, 1.5),
         entite("sensor", appareil, "Conso aujourd'hui"): (seuil_jour, 0.625, 1.25),
@@ -265,26 +315,35 @@ def regler_jauges(tableau: dict, appareil: str, seuil_debit: float, seuil_jour: 
             {"from": round(seuil * orange), "color": "#fb8c00"},
             {"from": round(seuil), "color": "#e53935"},
         ]
+    logger.debug("regler_jauges() retourne | jauges réglées")
 
 
 def cartes(tableau: dict):
+    logger.debug("cartes() appelée | parcours des cartes")
     for vue in tableau.get("views", []):
         for section in vue.get("sections", []):
             yield from section.get("cards", [])
+    logger.debug("cartes() retourne | parcours terminé")
 
 
 def paquet_ntfy(config: dict) -> bool:
+    logger.debug("paquet_ntfy() appelée | recherche du paquet ntfy")
     for pkg in (config.get("packages") or {}).values():
         if isinstance(pkg, str) and "ntfy.yaml" in pkg:
+            logger.debug("paquet_ntfy() retourne | True (paquet distant)")
             return True
         if isinstance(pkg, Include) and pkg.fichier.endswith("ntfy.yaml"):
+            logger.debug("paquet_ntfy() retourne | True (paquet local)")
             return True
         if isinstance(pkg, dict) and any("ntfy.yaml" in str(f) for f in pkg.get("files") or []):
+            logger.debug("paquet_ntfy() retourne | True (paquet fichiers)")
             return True
+    logger.debug("paquet_ntfy() retourne | False")
     return False
 
 
 def ajouter_actions_ntfy(tableau: dict, appareil: str) -> None:
+    logger.debug("ajouter_actions_ntfy() appelée | appareil={}", appareil)
     for vue in tableau.get("views", []):
         for section in vue.get("sections", []):
             titres = [c.get("heading") for c in section.get("cards", []) if c.get("type") == "heading"]
@@ -299,7 +358,9 @@ def ajouter_actions_ntfy(tableau: dict, appareil: str) -> None:
                         {"entity": entite("button", appareil, "ntfy - envoyer les bilans maintenant"), "name": "Envoyer les bilans maintenant"},
                     ],
                 })
+                logger.debug("ajouter_actions_ntfy() retourne | section Actions complétée")
                 return
+    logger.debug("ajouter_actions_ntfy() retourne | aucune section Actions trouvée")
 
 
 # ───────────────────────────── Programme principal ─────────────────────────────
@@ -312,6 +373,7 @@ class Dumper(yaml.SafeDumper):
 
 
 def main() -> None:
+    logger.debug("main() appelée | génération du tableau de bord")
     racine = Path(__file__).resolve().parent.parent
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--config", type=Path, default=racine / "compteur-eau-lora.yaml")
@@ -325,6 +387,7 @@ def main() -> None:
 
     chemin_secrets = args.secrets or args.config.parent / "secrets.yaml"
     if not chemin_secrets.exists():
+        logger.error("main() : {} introuvable (copie secrets.example.yaml en secrets.yaml)", chemin_secrets.name)
         sys.exit(f"{chemin_secrets} introuvable (copie secrets.example.yaml en secrets.yaml)")
     secrets = lire_yaml(chemin_secrets) or {}
     config = lire_yaml(args.config, secrets)
@@ -354,6 +417,7 @@ def main() -> None:
     texte = yaml.dump(tableau, Dumper=Dumper, allow_unicode=True, sort_keys=False, width=1000)
     args.sortie.write_text(entete + texte, encoding="utf-8")
     print(f"{args.sortie.name} : {len(voisins)} voisin(s) ({', '.join(v['nom'] for v in voisins) or 'aucun'})")
+    logger.debug("main() retourne | tableau de bord écrit")
 
 
 if __name__ == "__main__":

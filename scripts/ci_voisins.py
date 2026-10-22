@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """CI : écrit une variante de compteur-eau-lora.yaml avec N voisins (0 à 10, numéros factices).
 
-    python3 scripts/ci_voisins.py 10    # → ci-voisins-10.yaml + ci-secrets-10.yaml
+    python3 scripts/ci_voisins.py 10            # → ci-voisins-10.yaml + ci-secrets-10.yaml
+    python3 scripts/ci_voisins.py 10 <dossier>  # même chose dans <dossier> (défaut : racine du dépôt)
 
 Les voisins sont déduits de secrets.yaml (voisins/voisins.yaml) : le script écrit
 ci-secrets-N.yaml (secrets.example.yaml sans ses voisins, plus N voisins de test) et une copie
@@ -15,7 +16,9 @@ import re
 import sys
 from pathlib import Path
 
-racine = Path(__file__).resolve().parent.parent
+racine = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).resolve().parent.parent
+if len(sys.argv) > 1 and not sys.argv[1].isdigit():
+    sys.exit("N doit être un entier compris entre 0 et 10")
 n = int(sys.argv[1]) if len(sys.argv) > 1 else 10
 if not 0 <= n <= 10:
     sys.exit("N doit être compris entre 0 et 10")

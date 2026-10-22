@@ -7,11 +7,26 @@ license = "MIT"
 
 [dependency-groups]
 # Versions figées (socle) : à monter volontairement.
-test = ["pytest==9.0.0"]
+test = ["pytest==9.0.0", "pytest-cov==7.1.0", "pyyaml==6.0.3"]  # pyyaml : generer_tableau_de_bord.py
 scripts = ["loguru==0.7.3"]  # journalisation des scripts du dépôt (SOCLE §8)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+# Couverture des branches obligatoire (SOCLE §4, Mathilde-Team/.github#9).
+branch = true
+source = ["scripts"]
+# check_branch_protection.py : script commun du socle, copié tel quel depuis
+# Mathilde-Team/modele-depot où il est couvert à 100 % par ses tests ; le
+# re-tester ici dupliquerait ces tests à chaque copie.
+omit = ["scripts/check_branch_protection.py"]
+
+[tool.coverage.report]
+# Seuil bloquant de l'équipe (décision du 21/10/2026, Mathilde-Team/.github#9),
+# déclaré ici seulement : le job Qualité de ci.yml le lit via `pytest --cov`.
+fail_under = 95
+show_missing = true
 
 [tool.uv]
 package = false  # scripts de CI, pas un paquet Python publié

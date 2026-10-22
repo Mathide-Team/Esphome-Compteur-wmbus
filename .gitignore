@@ -7,3 +7,4 @@ ci-voisins-*.yaml
 ci-secrets-*.yaml
 __pycache__/
 *.pyc
+.coverage

@@ -34,9 +34,11 @@ jobs:
       - name: Script de vérification des protections (syntaxe)
         run: uv run --no-project python -m py_compile scripts/check_branch_protection.py
 
-      - name: Règles de journalisation (SOCLE §8)
-        # Audit AST + tests des règles : un écart ajouté fait échouer le job.
-        run: uv run --group test --group scripts pytest
+      - name: Tests et couverture (journalisation SOCLE §8, scripts ; seuil lu dans pyproject.toml)
+        # Audit AST + tests des règles et des scripts : un écart ajouté fait
+        # échouer le job. Seuil (95 %) et branches déclarés une seule fois dans
+        # pyproject.toml ([tool.coverage.*], issue #48).
+        run: uv run --group test --group scripts pytest --cov --cov-report=term-missing
 
       - name: Secrets factices (copie de secrets.example.yaml)
         run: cp secrets.example.yaml secrets.yaml

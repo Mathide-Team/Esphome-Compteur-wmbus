@@ -526,6 +526,7 @@ sensor:
   - platform: template
     id: debit_l_h
     name: "Débit estimé"
+    device_class: volume_flow_rate  # attendu par le champ « débit d'eau » du tableau de bord Énergie (#46)
     unit_of_measurement: "L/h"
     accuracy_decimals: 0
     state_class: measurement

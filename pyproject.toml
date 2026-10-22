@@ -1,0 +1,17 @@
+[project]
+name = "esphome-compteur-wmbus"
+version = "0.1.0"
+description = "Compteur d'eau ESPHome (wmbus)"
+requires-python = ">=3.13"
+license = "MIT"
+
+[dependency-groups]
+# Versions figées (socle) : à monter volontairement.
+test = ["pytest==9.0.0"]
+scripts = ["loguru==0.7.3"]  # journalisation des scripts du dépôt (SOCLE §8)
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv]
+package = false  # scripts de CI, pas un paquet Python publié

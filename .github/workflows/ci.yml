@@ -34,6 +34,10 @@ jobs:
       - name: Script de vérification des protections (syntaxe)
         run: uv run --no-project python -m py_compile scripts/check_branch_protection.py
 
+      - name: Règles de journalisation (SOCLE §8)
+        # Audit AST + tests des règles : un écart ajouté fait échouer le job.
+        run: uv run --group test --group scripts pytest
+
       - name: Secrets factices (copie de secrets.example.yaml)
         run: cp secrets.example.yaml secrets.yaml
 
@@ -51,7 +55,7 @@ jobs:
 
       - name: Générateur du tableau de bord (voisins déclarés)
         run: |
-          uv run --no-project --with pyyaml==6.0.3 python scripts/generer_tableau_de_bord.py
+          uv run --no-project --with pyyaml==6.0.3 --with loguru==0.7.3 python scripts/generer_tableau_de_bord.py
           uvx yamllint==1.38.0 --strict -c .yamllint.yaml ha_dashboard_compteur_eau.genere.yaml
 
   compilation:

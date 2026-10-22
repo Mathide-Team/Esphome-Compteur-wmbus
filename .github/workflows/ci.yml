@@ -39,8 +39,20 @@ jobs:
 
       - name: Validation ESPHome (esphome config)
         # Valide le schéma complet (composants, broches, substitutions, secrets),
-        # sans compiler. La sortie (configuration résolue) n'est pas affichée.
-        run: uvx --from "esphome==${ESPHOME_VERSION}" esphome config compteur-eau-lora.yaml > /dev/null
+        # sans compiler. La sortie (configuration résolue) n'est pas affichée :
+        # elle sert au contrôle du marqueur ci-dessous.
+        run: uvx --from "esphome==${ESPHOME_VERSION}" esphome config compteur-eau-lora.yaml > "$RUNNER_TEMP/config-resolue.yaml"
+
+      - name: "Marqueur stable pour les intégrations (issue #47, contrat avec Tarif-Eau)"
+        # README « Marqueur stable pour les intégrations » : projet ESPHome
+        # (fabricant/modèle de l'appareil dans HA) et nom du capteur d'index de
+        # la maison, vérifiés sur la configuration résolue. Les renommer casse
+        # la détection côté Tarif-Eau : ce contrôle le rend visible.
+        run: |
+          resolue="$RUNNER_TEMP/config-resolue.yaml"
+          grep -Pzq '\n  project:\n    name: mathilde-team\.compteur-eau-wmbus\n' "$resolue"
+          test "$(grep -c '^    name: Compteur eau - Volume total$' "$resolue")" = 1
+          grep -B1 '^    name: Compteur eau - Volume total$' "$resolue" | grep -q '^    id: eau_total$'
 
       - name: Validation ESPHome avec 0 et 10 voisins (déduits de secrets.yaml ; 10 = Izar, clés AES)
         run: |
